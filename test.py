@@ -2,14 +2,12 @@ import pandas as pd
 import numpy as np
 import os
 from datetime import datetime
-from datetime import time
 
-################################################################################################################################
+################################################################ TEAM ################################################################
 
 team_name = '041_BID' 
 
-################################################################################################################################
-
+################################################################ FILE ################################################################
 output_dir = os.path.expanduser("~/Desktop/competition_api")
 if not os.path.exists(output_dir):
     os.makedirs(output_dir, exist_ok=True)
@@ -44,49 +42,7 @@ def save_output(data, file_type, teamName):
     data.to_csv(file_path, index=False)
     print(f"{file_type} saved at {file_path}")
 
-statements = []
-
-file_path = '~/Desktop/Daily_Ticks.csv' 
-df = pd.read_csv(file_path)
-
-initial_investment = 10000000 
-
-# Load the summary file
-prev_summary_df = load_previous("summary", team_name)
-
-if prev_summary_df is not None:
-    if 'End Line available' in prev_summary_df.columns:
-        # ดึงค่าคอลัมน์ 'End Line available' ทั้งหมด   
-        initial_balance_series = prev_summary_df['End Line available']
-        
-        # ตรวจสอบว่าคอลัมน์ไม่ว่างเปล่า
-        if not initial_balance_series.empty:
-            # เข้าถึงค่าแรกของคอลัมน์
-            first_value = initial_balance_series.iloc[0]
-            
-            # ลบเครื่องหมายคั่นหลักพันและแปลงเป็น float
-            try:
-                initial_balance = float(str(first_value).replace(',', '').strip())
-                Start_Line_available = initial_balance
-                print("End Line available column loaded successfully.")
-                print(f"Initial balance (first value): {initial_balance}")
-            except ValueError:
-                print(f"Error converting '{first_value}' to a float.")
-                initial_balance = initial_investment  # ใช้ค่าตั้งต้นในกรณีเกิดข้อผิดพลาด
-        else:
-            print("'End Line available' column is empty.")
-            initial_balance = initial_investment  # ใช้ค่าตั้งต้นหากคอลัมน์ว่าง
-    else:
-        print("'End Line available' column not found in the file.")
-        initial_balance = initial_investment  # ใช้ค่าตั้งต้นหากไม่มีคอลัมน์
-else:
-    initial_balance = initial_investment  # ใช้ค่าตั้งต้นหากไฟล์ไม่โหลด
-    Start_Line_available = initial_investment
-    print(f"Initial balance = initial_investment: {initial_investment:,}")
-
-################################################################################################################################
-
-################################################################################################################################
+################################################################ FILE FUNCTION ################################################################
 
 # dictionary สำหรับ portfolio
 portfolio_data = {
@@ -141,14 +97,13 @@ summary_data = {
     'Maximum Drawdown': [],
     '%Return': []
 }
-################################################################################################################################
-# แปลงข้อมูลเป็น DataFrame
 
-################################################## Ex Create and Save ##############################################################################
-# ตัวอย่างการสร้างไฟล์ และสร้างข้อมูล
+def add_stock_to_portfolio(stock_name, start_vol, actual_vol, avg_cost, market_price, market_value, amount_cost, realized_PL):
 
+    market_value = actual_vol * market_price
+    unrealized_PL = market_value - amount_cost
+    percentage_unrealized_PL = (unrealized_PL / amount_cost * 100) if amount_cost != 0 else 0
 
-def add_stock_to_portfolio(stock_name, start_vol, actual_vol, avg_cost, market_price, market_value, amount_cost, unrealized_PL, percentage_unrealized_PL, realized_PL):
     portfolio_data['Table Name'].append('Portfolio_file')
     portfolio_data['File Name'].append(team_name)
     portfolio_data['Stock name'].append(stock_name)
@@ -162,22 +117,87 @@ def add_stock_to_portfolio(stock_name, start_vol, actual_vol, avg_cost, market_p
     portfolio_data['% Unrealized P/L'].append(percentage_unrealized_PL)
     portfolio_data['Realized P/L'].append(realized_PL)
 
-add_stock_to_portfolio("AOT", 0, 0, 0, 61.5, 0, 0, 0, 0, 0)
-add_stock_to_portfolio("MARK", 0, 0, 0, 5.5, 0, 0, 0, 0, 0)
+def update_statement(stock_name, side, volume, price, initial_balance):
+
+    current_datetime = datetime.now()
+    date = current_datetime.strftime("%Y-%m-%d")
+    time = current_datetime.strftime("%I:%M:%S %p")
+
+    amount_cost = volume * price
+    statement_data['Table Name'].append('Statement_file')
+    statement_data['File Name'].append(team_name)
+    statement_data['Stock Name'].append(stock_name)
+    statement_data['Date'].append(date)
+    statement_data['Time'].append(time)
+    statement_data['Side'].append(side)
+    statement_data['Volume'].append(str(volume))
+    statement_data['Price'].append(str(price))
+    statement_data['Amount Cost'].append(str(amount_cost))
+    statement_data['End Line Available'].append(initial_balance)
+
+################################################################ START ################################################################
+
+statements = []
+
+file_path = '~/Desktop/Daily_Ticks.csv' 
+df = pd.read_csv(file_path)
+
+initial_investment = 10000000 
+
+# Load the summary file
+prev_summary_df = load_previous("summary", team_name)
+
+if prev_summary_df is not None:
+    if 'End Line available' in prev_summary_df.columns:
+        # ดึงค่าคอลัมน์ 'End Line available' ทั้งหมด   
+        initial_balance_series = prev_summary_df['End Line available']
+        
+        # ตรวจสอบว่าคอลัมน์ไม่ว่างเปล่า
+        if not initial_balance_series.empty:
+            # เข้าถึงค่าแรกของคอลัมน์
+            first_value = initial_balance_series.iloc[0]
+            
+            # ลบเครื่องหมายคั่นหลักพันและแปลงเป็น float
+            try:
+                initial_balance = float(str(first_value).replace(',', '').strip())
+                Start_Line_available = initial_balance
+                print("End Line available column loaded successfully.")
+                print(f"Initial balance (first value): {initial_balance}")
+            except ValueError:
+                print(f"Error converting '{first_value}' to a float.")
+                initial_balance = initial_investment  # ใช้ค่าตั้งต้นในกรณีเกิดข้อผิดพลาด
+        else:
+            print("'End Line available' column is empty.")
+            initial_balance = initial_investment  # ใช้ค่าตั้งต้นหากคอลัมน์ว่าง
+    else:
+        print("'End Line available' column not found in the file.")
+        initial_balance = initial_investment  # ใช้ค่าตั้งต้นหากไม่มีคอลัมน์
+else:
+    initial_balance = initial_investment  # ใช้ค่าตั้งต้นหากไฟล์ไม่โหลด
+    Start_Line_available = initial_investment
+    print(f"Initial balance = initial_investment: {initial_investment:,}")
+
+################################################################ BUY - SELL FUNCTION ################################################################
+
+def buy_stock(stock_name, volume, price, initial_balance):
+    if initial_balance >= volume * price:
+        initial_balance -= volume * price
+        add_stock_to_portfolio(stock_name, 0, 0, 0, 61.5, 0, 0, 0)
+        update_statement(stock_name, "Buy", volume, price, initial_balance)
+    return initial_balance
+
+def sell_stock(stock_name, volume, price):
+    update_statement(stock_name, "Sell", volume, price)
+
+################################################################ BUY - SELL ################################################################
+
+initial_balance = buy_stock("AOT", 100, 61.25, initial_balance)
+initial_balance = buy_stock("MARK1", 50, 500, initial_balance)
+initial_balance = buy_stock("MARK2", 500, 40, initial_balance)
+
+################################################################################################################################
 
 portfolio_df = pd.DataFrame(portfolio_data)
-
-statement_data['Table Name'].append('Statement_file')
-statement_data['File Name'].append(team_name)
-statement_data['Stock Name'].append('AOT')
-statement_data['Date'].append('2024-11-21')
-statement_data['Time'].append('09:56:23 AM')
-statement_data['Side'].append('Buy')
-statement_data['Volume'].append('100')
-statement_data['Price'].append('60.75')
-statement_data['Amount Cost'].append('6075')
-statement_data['End Line Available'].append(initial_balance)
-
 statement_df = pd.DataFrame(statement_data)
 
 last_end_line_available = 1
