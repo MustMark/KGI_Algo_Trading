@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 ################################################################ TEAM ################################################################
 
@@ -216,7 +216,7 @@ else:
 
 ################################################################ BUY - SELL FUNCTION ################################################################
 
-def is_valid_transaction(stock_name, volume, price, transaction_type, buy_time = None):
+def is_valid_transaction(stock_name, volume, price, transaction_type):
 
     global time_now
 
@@ -261,8 +261,25 @@ def buy_stock(stock_name, volume, price, initial_balance):
             global time_now
 
             time_now = datetime.strptime(match_time, "%Y-%m-%d %H:%M:%S").time()
+            
+            market_value = 0
 
-            market_value = sum([portfolio[stock_name]['volume'] * portfolio[stock_name]['price'] for stock_name in portfolio])
+            for stock_in_portfolio in portfolio:
+                current_time = time_now
+                last_price = None
+
+                while last_price is None:
+                    filtered_df = df[(df['ShareCode'] == stock_in_portfolio) & 
+                                    (pd.to_datetime(df['TradeDateTime']).dt.time == current_time)]
+                    
+                    if not filtered_df.empty:
+                        last_price = filtered_df.iloc[0]['LastPrice']
+                    else:
+                        # ลด current_time ลงทีละ 1 วินาที
+                        current_time = (datetime.combine(datetime(1, 1, 1), current_time) - timedelta(seconds=1)).time()
+                
+                if last_price is not None:
+                    market_value += portfolio[stock_in_portfolio]['volume'] * last_price
 
             update_statement(stock_name, match_time, "Buy", volume, portfolio[stock_name]['volume'], price, initial_balance, market_value)
             print(f"Bought {volume} shares of {stock_name} at {price} THB.")
@@ -308,7 +325,24 @@ def sell_stock(stock_name, volume, price, initial_balance):
                 if money_received > 0:
                     count_win += 1
                 
-                market_value = sum([portfolio[stock_name]['volume'] * portfolio[stock_name]['price'] for stock_name in portfolio])
+                market_value = 0
+
+                for stock_in_portfolio in portfolio:
+                    current_time = time_now
+                    last_price = None
+
+                    while last_price is None:
+                        filtered_df = df[(df['ShareCode'] == stock_in_portfolio) & 
+                                        (pd.to_datetime(df['TradeDateTime']).dt.time == current_time)]
+                        
+                        if not filtered_df.empty:
+                            last_price = filtered_df.iloc[0]['LastPrice']
+                        else:
+                            # ลด current_time ลงทีละ 1 วินาที
+                            current_time = (datetime.combine(datetime(1, 1, 1), current_time) - timedelta(seconds=1)).time()
+                    
+                    if last_price is not None:
+                        market_value += portfolio[stock_in_portfolio]['volume'] * last_price
 
                 update_statement(stock_name, match_time, "Sell", volume, portfolio[stock_name]['volume'], price, initial_balance, market_value)
                 print(f"Sold {volume} shares of {stock_name} at {price} THB.")
@@ -324,6 +358,7 @@ def sell_stock(stock_name, volume, price, initial_balance):
 
 ################################################################ BUY - SELL ################################################################
 
+# TEST CASE
 initial_balance = buy_stock("ADVANC", 100, 295.0, initial_balance)
 print(portfolio)
 initial_balance = buy_stock("ADVANC", 2700, 294.0, initial_balance)
