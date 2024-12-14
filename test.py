@@ -70,9 +70,12 @@ statement_data = {
     'Time': [],
     'Side': [],
     'Volume': [],
+    'Actual Vol': [],
     'Price': [],
     'Amount Cost': [],
-    'End Line Available': []
+    'End Line Available': [],
+    'Portfolio value' : [],
+    'NAV' : []
 }
 
 # dictionary สำหรับ summary
@@ -83,6 +86,7 @@ summary_data = {
     'NAV': [],
     'Portfolio value': [],
     'End Line available': [],
+    'Start Line available' : [],
     'Number of wins': [], 
     'Number of matched trades': [],
     'Number of transactions:': [],
@@ -118,20 +122,21 @@ def add_stock_to_portfolio(stock_name, start_vol, actual_vol, avg_cost, realized
     portfolio_data['Stock name'].append(stock_name)
     portfolio_data['Start Vol'].append(start_vol)
     portfolio_data['Actual Vol'].append(actual_vol)
-    portfolio_data['Avg Cost'].append(avg_cost)
-    portfolio_data['Market Price'].append(market_price)
-    portfolio_data['Amount Cost'].append(amount_cost)
-    portfolio_data['Market Value'].append(market_value)
-    portfolio_data['Unrealized P/L'].append(unrealized_PL)
-    portfolio_data['% Unrealized P/L'].append(percentage_unrealized_PL)
-    portfolio_data['Realized P/L'].append(realized_PL)
+    portfolio_data['Avg Cost'].append(round(avg_cost, 4))
+    portfolio_data['Market Price'].append(round(market_price, 4))
+    portfolio_data['Amount Cost'].append(round(amount_cost, 4))
+    portfolio_data['Market Value'].append(round(market_value, 4))
+    portfolio_data['Unrealized P/L'].append(round(unrealized_PL, 4))
+    portfolio_data['% Unrealized P/L'].append(round(percentage_unrealized_PL, 4))
+    portfolio_data['Realized P/L'].append(round(realized_PL, 4))
 
     return True
 
-def update_statement(stock_name, datetime ,side, volume, price, initial_balance):
+def update_statement(stock_name, datetime ,side, volume, actual_vol,price, initial_balance, market_value):
 
     date, time = datetime.split()
     amount_cost = volume * price
+    nav = initial_balance + market_value
 
     statement_data['Table Name'].append('Statement_file')
     statement_data['File Name'].append(team_name)
@@ -140,15 +145,21 @@ def update_statement(stock_name, datetime ,side, volume, price, initial_balance)
     statement_data['Time'].append(time)
     statement_data['Side'].append(side)
     statement_data['Volume'].append(volume)
-    statement_data['Price'].append(price)
-    statement_data['Amount Cost'].append(amount_cost)
-    statement_data['End Line Available'].append(initial_balance)
+    statement_data['Actual Vol'].append(actual_vol)
+    statement_data['Price'].append(round(price, 4))
+    statement_data['Amount Cost'].append(round(amount_cost, 4))
+    statement_data['End Line Available'].append(round(initial_balance, 4))
+    statement_data['Portfolio value'].append(round(market_value, 4))
+    statement_data['NAV'].append(round(nav, 4))
 
 ################################################################ START ################################################################
 
+time_now = datetime.strptime("00:00:00", "%H:%M:%S").time()
+trading_day = 0
 portfolio = {}
 count_sell = 0
 count_win = 0
+last_end_line_available = 0
 initial_investment = 10000000 
 
 file_path = '~/Desktop/Daily_Ticks.csv' 
@@ -158,7 +169,23 @@ df = pd.read_csv(file_path)
 prev_portfolio_df = load_previous("portfolio", team_name)
 prev_summary_df = load_previous("summary", team_name)
 
+if prev_portfolio_df is not None:
+    for index, row in prev_portfolio_df.iterrows():
+        stock_name = row.iloc[2]
+        volume = int(row.iloc[4])
+        price = float(row.iloc[5]) 
+        realized_PL = float(row.iloc[11]) 
+        
+        # เพิ่มข้อมูลลงใน portfolio
+        portfolio[stock_name] = {
+            'volume': volume,
+            'price': price,
+            'realized_PL': realized_PL
+        }
+
 if prev_summary_df is not None:
+
+    trading_day = prev_summary_df['trading_day'].iloc[0]
     if 'End Line available' in prev_summary_df.columns:
         # ดึงค่าคอลัมน์ 'End Line available' ทั้งหมด   
         initial_balance_series = prev_summary_df['End Line available']
@@ -191,6 +218,8 @@ else:
 
 def is_valid_transaction(stock_name, volume, price, transaction_type, buy_time = None):
 
+    global time_now
+
     # กรองข้อมูลที่ตรงกับ stock_name
     filtered_df = df[df['ShareCode'] == stock_name]
     
@@ -198,18 +227,12 @@ def is_valid_transaction(stock_name, volume, price, transaction_type, buy_time =
     filtered_df = filtered_df[filtered_df['Flag'] == transaction_type]
     
     # ตรวจสอบว่ามีราคาและจำนวนที่ตรงกันหรือไม่
-    if transaction_type == "Sell":
-        match = filtered_df[(filtered_df['LastPrice'] == price) & (filtered_df['Volume'] == volume)]
-    else:
-        # หากเป็นการซื้อ, เช็กว่าเวลาใน `TradeDateTime` มากกว่า `buy_time`
-        filtered_df['NumericTime'] = filtered_df['TradeDateTime'].apply(
-            lambda x: int(x.split()[1].replace(":", ""))
-        )
+    filtered_df['TradeTime'] = pd.to_datetime(filtered_df['TradeDateTime']).dt.time
 
-        # กรองข้อมูลที่เวลามากกว่าช่วงเวลา `buy_time`
-        match = filtered_df[(filtered_df['LastPrice'] == price) & 
-                            (filtered_df['Volume'] == volume) & 
-                            (filtered_df['NumericTime'] > buy_time)]
+    # กรองข้อมูลที่เวลามากกว่าเวลาในการซื้อ
+    filtered_df = filtered_df[filtered_df['TradeTime'] > time_now]
+
+    match = filtered_df[(filtered_df['LastPrice'] == price) & (filtered_df['Volume'] == volume)]
 
     if not match.empty:
         # Return TradeDateTime ของแถวที่ตรงกับเงื่อนไข
@@ -226,21 +249,22 @@ def buy_stock(stock_name, volume, price, initial_balance):
         if initial_balance >= volume * price:
             initial_balance -= volume * price
             if stock_name in portfolio:
-                portfolio[stock_name].append({
-                    'volume': volume,
-                    'price': price,
-                    'match_time': match_time,
-                    'realized_PL' : 0
-                })
+                portfolio[stock_name]['price'] = ((portfolio[stock_name]['volume'] * portfolio[stock_name]['price']) + (volume * price)) / (portfolio[stock_name]['volume'] + volume)
+                portfolio[stock_name]['volume'] += volume
             else:
-                portfolio[stock_name] = [{
+                portfolio[stock_name] = {
                     'volume': volume,
                     'price': price,
-                    'match_time': match_time,
                     'realized_PL' : 0
-                }]
+                }
 
-            update_statement(stock_name, match_time, "Buy", volume, price, initial_balance)
+            global time_now
+
+            time_now = datetime.strptime(match_time, "%Y-%m-%d %H:%M:%S").time()
+
+            market_value = sum([portfolio[stock_name]['volume'] * portfolio[stock_name]['price'] for stock_name in portfolio])
+
+            update_statement(stock_name, match_time, "Buy", volume, portfolio[stock_name]['volume'], price, initial_balance, market_value)
             print(f"Bought {volume} shares of {stock_name} at {price} THB.")
             print(f"Remaining balance: {initial_balance} THB.")
         else:
@@ -254,12 +278,10 @@ def buy_stock(stock_name, volume, price, initial_balance):
 def sell_stock(stock_name, volume, price, initial_balance):
     # ตรวจสอบว่ามีหุ้นในพอร์ตหรือไม่ และจำนวนพอขาย
     if stock_name in portfolio:
-        stock_data = portfolio[stock_name]
-        lowest_price_index = min(range(len(portfolio[stock_name])), key=lambda i: portfolio[stock_name][i]['price'])
-        actual_volume = stock_data[lowest_price_index]['volume']
+        actual_volume = portfolio[stock_name]['volume']
         
         if actual_volume >= volume:
-            match_time = is_valid_transaction(stock_name, volume, price, "Buy", int(portfolio[stock_name][lowest_price_index]["match_time"].split()[1].replace(":", "")))
+            match_time = is_valid_transaction(stock_name, volume, price, "Buy")
             if match_time:
                 # คำนวณเงินที่ได้จากการขาย
                 money_received = volume * price
@@ -273,16 +295,22 @@ def sell_stock(stock_name, volume, price, initial_balance):
                     del portfolio[stock_name]  # ลบหุ้นออกจากพอร์ตถ้าขายหมด
                 else:
                     portfolio[stock_name]['volume'] = new_actual_volume
-                
+                    portfolio[stock_name]['realized_PL'] += money_received - (portfolio[stock_name]['price'] * volume)
+            
+                global time_now
                 global count_sell
                 global count_win
                 
+                time_now = datetime.strptime(match_time, "%Y-%m-%d %H:%M:%S").time()
+        
                 count_sell += 1     
 
                 if money_received > 0:
                     count_win += 1
+                
+                market_value = sum([portfolio[stock_name]['volume'] * portfolio[stock_name]['price'] for stock_name in portfolio])
 
-                update_statement(stock_name, match_time, "Sell", volume, price, initial_balance)
+                update_statement(stock_name, match_time, "Sell", volume, portfolio[stock_name]['volume'], price, initial_balance, market_value)
                 print(f"Sold {volume} shares of {stock_name} at {price} THB.")
                 print(f"New balance: {initial_balance} THB.")
             else:
@@ -296,53 +324,55 @@ def sell_stock(stock_name, volume, price, initial_balance):
 
 ################################################################ BUY - SELL ################################################################
 
+initial_balance = buy_stock("ADVANC", 100, 295.0, initial_balance)
+print(portfolio)
 initial_balance = buy_stock("ADVANC", 2700, 294.0, initial_balance)
 print(portfolio)
 initial_balance = buy_stock("AOT", 100, 61.5, initial_balance)
 print(portfolio)
 initial_balance = buy_stock("EA", 100, 5.5, initial_balance)
 print(portfolio)
-initial_balance = sell_stock("ADVANC", 2700, 295.0, initial_balance)
+initial_balance = sell_stock("ADVANC", 100, 289.0, initial_balance)
 print(portfolio)
 
 ################################################################################################################################
 
 for stock_name in portfolio:
 
-    total_volume = sum(item['volume'] for item in portfolio[stock_name])
-    total_price = sum(item['price'] for item in portfolio[stock_name]) / len(portfolio[stock_name])
-    total_realized_PL = sum(item['realized_PL'] for item in portfolio[stock_name])
+    total_volume = portfolio[stock_name]['volume']
+    total_price = portfolio[stock_name]['price']
+    total_realized_PL = portfolio[stock_name]['realized_PL']
 
     add_stock_to_portfolio(stock_name, 0, total_volume, total_price, total_realized_PL)
 
 portfolio_df = pd.DataFrame(portfolio_data)
 statement_df = pd.DataFrame(statement_data)
 
-last_end_line_available = 1
+last_end_line_available = statement_df['End Line Available'].iloc[-1]
 
 summary_data = {
     'Table Name': ['Sum_file'],
     'File Name': [team_name],
-    'trading_day': [1],  
-    'NAV': [portfolio_df['Market Value'].sum() + last_end_line_available],
-    'Portfolio value': [portfolio_df['Market Value'].sum()],
-    'End Line available': [last_end_line_available],  # Use the correct End Line Available
-    'Start Line available':[Start_Line_available],
+    'trading_day': [trading_day + 1],  
+    'NAV': [round(portfolio_df['Market Value'].sum() + last_end_line_available, 4)],
+    'Portfolio value': [round(portfolio_df['Market Value'].sum(), 4)],
+    'End Line available': [round(last_end_line_available, 4)],  # Use the correct End Line Available
+    'Start Line available': [round(Start_Line_available, 4)],
     'Number of wins': [count_win], 
     'Number of matched trades': [count_sell], #นับ sell เพราะ เทรดbuy sellด้วย volume เท่ากัน
     'Number of transactions:': [len(statement_df)],
-    'Net Amount': [statement_df['Amount Cost'].sum()],
-    'Unrealized P/L': [portfolio_df['Unrealized P/L'].sum()],
-    '% Unrealized P/L': [(portfolio_df['Unrealized P/L'].sum() / initial_investment * 100) if initial_investment else 0],
-    'Realized P/L': [portfolio_df['Realized P/L'].sum()],
-    'Maximum value': [statement_df['End Line Available'].max()],
-    'Minimum value': [statement_df['End Line Available'].min()],
-    'Win rate': [(count_win * 100)/ count_sell],
-    'Calmar Ratio': [((portfolio_df['Market Value'].sum() + last_end_line_available - initial_investment) / initial_investment * 100) / \
-                    ((portfolio_df['Market Value'].sum() + last_end_line_available - 10_000_000) / 10_000_000)],
-    'Relative Drawdown': [(portfolio_df['Market Value'].sum() + last_end_line_available - 10_000_000) / 10_000_000 / statement_df['End Line Available'].max() * 100],
-    'Maximum Drawdown': [(portfolio_df['Market Value'].sum() + last_end_line_available - 10_000_000) / 10_000_000],
-    '%Return': [((portfolio_df['Market Value'].sum() + last_end_line_available - initial_investment) / initial_investment * 100)]
+    'Net Amount': [round(statement_df['Amount Cost'].sum(), 4)],
+    'Unrealized P/L': [round(portfolio_df['Unrealized P/L'].sum(), 4)],
+    '% Unrealized P/L': [round((portfolio_df['Unrealized P/L'].sum() / initial_investment * 100) if initial_investment else 0, 4)],
+    'Realized P/L': [round(portfolio_df['Realized P/L'].sum(), 4)],
+    'Maximum value': [round(statement_df['End Line Available'].max(), 4)],
+    'Minimum value': [round(statement_df['End Line Available'].min(), 4)],
+    'Win rate' : [round((count_win * 100) / count_sell, 4) if count_sell != 0 else 0],
+    'Calmar Ratio': [round(((portfolio_df['Market Value'].sum() + last_end_line_available - initial_investment) / initial_investment * 100) / \
+                    ((portfolio_df['Market Value'].sum() + last_end_line_available - 10_000_000) / 10_000_000), 4)],
+    'Relative Drawdown': [round((portfolio_df['Market Value'].sum() + last_end_line_available - 10_000_000) / 10_000_000 / statement_df['End Line Available'].max() * 100, 4)],
+    'Maximum Drawdown': [round((statement_df['End Line Available'].max() - statement_df['End Line Available'].min()) / statement_df['End Line Available'].max(), 4)],
+    '%Return': [round((portfolio_df['Market Value'].sum() + last_end_line_available - initial_investment) / initial_investment * 100, 4)]
 }
 
 summary_df = pd.DataFrame(summary_data)
