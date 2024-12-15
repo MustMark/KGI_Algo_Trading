@@ -277,14 +277,14 @@ def buy_stock(stock_name, volume, price, initial_balance):
                     market_value += portfolio[stock_in_portfolio]['volume'] * last_price
 
             update_statement(stock_name, match_time, "Buy", volume, portfolio[stock_name]['volume'], price, initial_balance, market_value)
-            # print(f"Bought {volume} shares of {stock_name} at {price} THB.")
-            # print(f"Remaining balance: {initial_balance} THB.")
+            print(f"Bought {volume} shares of {stock_name} at {price} THB.")
+            print(f"Remaining balance: {initial_balance} THB.")
         else:
-            # print("Not enough balance to buy stock.")
-            pass
+            print("Not enough balance to buy stock.")
+            # pass
     else:
-        # print(f"Buy {stock_name} failed. Invalid transaction.")
-        pass
+        print(f"Buy {stock_name} failed. Invalid transaction.")
+        # pass
     
     return initial_balance
 
@@ -297,12 +297,21 @@ def sell_stock(stock_name, volume, price, initial_balance):
         if actual_volume >= volume:
             match_time = is_valid_transaction(stock_name, volume, price, "Buy")
             if match_time:
-                # คำนวณเงินที่ได้จากการขาย
+
+                global time_now
+                global count_sell
+                global count_win
+
                 money_received = volume * price
                 
                 # เพิ่มเงินเข้าไปในยอดคงเหลือ
                 initial_balance += money_received
                 
+                count_sell += 1     
+
+                if price > portfolio[stock_name]['price']:
+                    count_win += 1
+
                 # อัพเดตข้อมูลในพอร์ตชั่วคราว (ลดจำนวนหุ้นในพอร์ต)
                 new_actual_volume = actual_volume - volume
                 if new_actual_volume == 0:
@@ -310,17 +319,8 @@ def sell_stock(stock_name, volume, price, initial_balance):
                 else:
                     portfolio[stock_name]['volume'] = new_actual_volume
                     portfolio[stock_name]['realized_PL'] += money_received - (portfolio[stock_name]['price'] * volume)
-            
-                global time_now
-                global count_sell
-                global count_win
                 
                 time_now = datetime.strptime(match_time, "%Y-%m-%d %H:%M:%S").time()
-        
-                count_sell += 1     
-
-                if money_received > 0:
-                    count_win += 1
                 
                 market_value = 0
 
@@ -349,14 +349,14 @@ def sell_stock(stock_name, volume, price, initial_balance):
                 # print(f"Sold {volume} shares of {stock_name} at {price} THB.")
                 # print(f"New balance: {initial_balance} THB.")
             else:
-                # print(f"Sell {stock_name} failed.")
-                pass
+                print(f"Sell {stock_name} failed.")
+                # pass
         else:
-            # print("Not enough shares in portfolio to sell.")
-            pass
+            print("Not enough shares in portfolio to sell.")
+            # pass
     else:
-        # print(f"{stock_name} not in portfolio.")
-        pass
+        print(f"{stock_name} not in portfolio.")
+        # pass
     
     return initial_balance
 
@@ -393,8 +393,8 @@ for uniq in unique_sharecodes:
 
 # Gen buy sell signals
 MaFast_period = 1  # Fast moving average period
-MaSlow_period = 34  # Slow moving average period
-Signal_period = 5   # Signal line period
+MaSlow_period = 16  # Slow moving average period
+Signal_period = 7   # Signal line period
 
 def sma(data, period):
     return data.rolling(window=period).mean()
@@ -408,11 +408,11 @@ for uniq in unique_sharecodes:
 
     # ใช้ iloc เพื่อแทนการ shift
     eq_df[uniq]['Buy_Signal'] = [
-        (buffer1.iloc[i] < buffer2.iloc[i]) and (buffer1.iloc[i-1] >= buffer2.iloc[i-1]) if i > 0 else False
+        (buffer1.iloc[i] < buffer2.iloc[i]) & (buffer1.iloc[i-1] >= buffer2.iloc[i-1]) if i > 0 else False
         for i in range(len(buffer1))
     ]
     eq_df[uniq]['Sell_Signal'] = [
-        (buffer1.iloc[i] > buffer2.iloc[i]) and (buffer1.iloc[i-1] <= buffer2.iloc[i-1]) if i > 0 else False
+        (buffer1.iloc[i] > buffer2.iloc[i]) & (buffer1.iloc[i-1] <= buffer2.iloc[i-1]) if i > 0 else False
         for i in range(len(buffer1))
     ]
 
@@ -421,14 +421,17 @@ for uniq in unique_sharecodes:
         # สัญญาณซื้อ
         if eq_df[uniq]['Buy_Signal'].iloc[i]:
             price = eq_df[uniq]['Close'].iloc[i]
-            volume = 1000  # จำนวนหุ้นที่ซื้อ
+            volume = 100  # จำนวนหุ้นที่ซื้อ
             initial_balance = buy_stock(uniq, volume, price, initial_balance)
         
         # สัญญาณขาย
         if eq_df[uniq]['Sell_Signal'].iloc[i]:
             price = eq_df[uniq]['Close'].iloc[i]
-            volume = 1000  # จำนวนหุ้นที่ขาย
+            volume = 100 # จำนวนหุ้นที่ขาย
             initial_balance = sell_stock(uniq, volume, price, initial_balance)
+    
+    # if time_now > datetime.strptime("14:00:00", "%H:%M:%S").time():
+    #     break
 
 ################################################################################################################################
 
