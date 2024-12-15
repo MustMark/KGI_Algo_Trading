@@ -1,7 +1,9 @@
 import pandas as pd
 import numpy as np
 import os
-from datetime import datetime, timedelta
+# from datetime import *
+from datetime import datetime, timedelta, date, time
+
 
 ################################################################ TEAM ################################################################
 
@@ -374,15 +376,18 @@ def sell_stock(stock_name, volume, price, initial_balance):
 # initial_balance = sell_stock("ADVANC", 100, 289.0, initial_balance)
 # print(portfolio)
 
-df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy')]  # ฟิลเตอร์ข้อมูลที่เป็น Sell หรือ Buy
-df['TradeDateTime'] = pd.to_datetime(df['TradeDateTime'])  # แปลงเวลาตามคอลัมน์ TradeDateTime
+df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy')]
+df['TradeDateTime'] = pd.to_datetime(df['TradeDateTime'])
 
-# Clean Data
+MaFast_period = 1  # Fast moving average period
+MaSlow_period = 34  # Slow moving average period
+Signal_period = 5   # Signal line period
+
+# Clean Data and Generate Buy Sell Signal
 unique_sharecodes = list(df['ShareCode'].unique())
 eq_df = {}
 for uniq in unique_sharecodes:
     eq_df[uniq] = df[df['ShareCode'] == uniq]
-
     eq_df[uniq] = eq_df[uniq].resample('5min', on='TradeDateTime').agg({
         'LastPrice': ['first', 'max', 'min', 'last'],  # Open, High, Low, Close
         'Volume': 'sum',
