@@ -1,7 +1,9 @@
 import pandas as pd
 import numpy as np
 import os
-from datetime import datetime, timedelta
+# from datetime import *
+from datetime import datetime, timedelta, date, time
+
 
 ################################################################ TEAM ################################################################
 
@@ -374,15 +376,18 @@ def sell_stock(stock_name, volume, price, initial_balance):
 # initial_balance = sell_stock("ADVANC", 100, 289.0, initial_balance)
 # print(portfolio)
 
-df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy')]  # ฟิลเตอร์ข้อมูลที่เป็น Sell หรือ Buy
-df['TradeDateTime'] = pd.to_datetime(df['TradeDateTime'])  # แปลงเวลาตามคอลัมน์ TradeDateTime
+df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy')]
+df['TradeDateTime'] = pd.to_datetime(df['TradeDateTime'])
 
-# Clean Data
+MaFast_period = 1  # Fast moving average period
+MaSlow_period = 34  # Slow moving average period
+Signal_period = 5   # Signal line period
+
+# Clean Data and Generate Buy Sell Signal
 unique_sharecodes = list(df['ShareCode'].unique())
 eq_df = {}
 for uniq in unique_sharecodes:
     eq_df[uniq] = df[df['ShareCode'] == uniq]
-
     eq_df[uniq] = eq_df[uniq].resample('5min', on='TradeDateTime').agg({
         'LastPrice': ['first', 'max', 'min', 'last'],  # Open, High, Low, Close
         'Volume': 'sum',
@@ -391,44 +396,50 @@ for uniq in unique_sharecodes:
     eq_df[uniq].columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Value']
     eq_df[uniq].reset_index(inplace=True)
 
-# Gen buy sell signals
-MaFast_period = 1  # Fast moving average period
-MaSlow_period = 34  # Slow moving average period
-Signal_period = 5   # Signal line period
-
-def sma(data, period):
-    return data.rolling(window=period).mean()
-
-for uniq in unique_sharecodes:
-    smaFast = sma(eq_df[uniq]['Close'], MaFast_period)
-    smaSlow = sma(eq_df[uniq]['Close'], MaSlow_period)
+    smaFast = eq_df[uniq]['Close'].rolling(window=MaFast_period).mean()
+    smaSlow = eq_df[uniq]['Close'].rolling(window=MaSlow_period).mean()
 
     buffer1 = smaFast - smaSlow
     buffer2 = buffer1.rolling(window=Signal_period).mean()
 
-    # ใช้ iloc เพื่อแทนการ shift
-    eq_df[uniq]['Buy_Signal'] = [
-        (buffer1.iloc[i] < buffer2.iloc[i]) and (buffer1.iloc[i-1] >= buffer2.iloc[i-1]) if i > 0 else False
-        for i in range(len(buffer1))
-    ]
-    eq_df[uniq]['Sell_Signal'] = [
-        (buffer1.iloc[i] > buffer2.iloc[i]) and (buffer1.iloc[i-1] <= buffer2.iloc[i-1]) if i > 0 else False
-        for i in range(len(buffer1))
-    ]
+    eq_df[uniq]['Buy_Signal'] = (buffer1 < buffer2) & (buffer1.shift(1) >= buffer2.shift(1))
+    eq_df[uniq]['Sell_Signal'] = (buffer1 > buffer2) & (buffer1.shift(1) <= buffer2.shift(1))
 
-    # ซื้อและขายตามสัญญาณ
-    for i in range(1, len(eq_df[uniq])):  # เริ่มจาก i=1 เพื่อหลีกเลี่ยงข้อผิดพลาดการเข้าถึงค่า buffer ที่ไม่ถูกต้อง
-        # สัญญาณซื้อ
-        if eq_df[uniq]['Buy_Signal'].iloc[i]:
-            price = eq_df[uniq]['Close'].iloc[i]
-            volume = 1000  # จำนวนหุ้นที่ซื้อ
-            initial_balance = buy_stock(uniq, volume, price, initial_balance)
-        
-        # สัญญาณขาย
-        if eq_df[uniq]['Sell_Signal'].iloc[i]:
-            price = eq_df[uniq]['Close'].iloc[i]
-            volume = 1000  # จำนวนหุ้นที่ขาย
-            initial_balance = sell_stock(uniq, volume, price, initial_balance)
+# buy sell from signal
+itr = {uniq: 0 for uniq in unique_sharecodes}
+money_per_turn = 1_000_000
+time_start = datetime.combine(date.today(), time(9, 55))
+is_finished = True
+while True:
+    for uniq in unique_sharecodes:
+        if itr[uniq] < len(eq_df[uniq]):
+            is_finished = False
+            series = eq_df[uniq].iloc[itr[uniq]]
+            trade_dt = datetime.time(series["TradeDateTime"])
+
+            if trade_dt == time_start.time():
+                if series["Buy_Signal"] == True:
+                    print(f"{time_start.time()}\t{uniq}\tbuy")
+                    price = series['Close'] 
+                    vol = 100
+                    # initial_balance = buy_stock(uniq, vol, price, initial_balance)
+
+                elif series["Sell_Signal"] == True:
+                    print(f"{time_start.time()}\t{uniq}\tsell")
+                    price = series['Close'] 
+                    vol = 100
+                    # initial_balance = sell_stock(uniq, vol, price, initial_balance)
+
+            if trade_dt <= time_start.time():
+                itr[uniq] += 1
+
+    if is_finished:
+        break
+    is_finished = True
+    time_start += timedelta(minutes=5)
+
+
+
 
 ################################################################################################################################
 
