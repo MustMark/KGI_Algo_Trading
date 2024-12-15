@@ -228,7 +228,10 @@ def is_valid_transaction(stock_name, volume, price, transaction_type):
     
     filtered_df['TradeTime'] = pd.to_datetime(filtered_df['TradeDateTime']).dt.time
 
-    filtered_df = filtered_df[filtered_df['TradeTime'] > time_now]
+    time_now_plus_5min = (datetime.combine(datetime.today(), time_now) + timedelta(minutes=5)).time()
+
+    # กรองข้อมูลที่มี TradeTime มากกว่า time_now_plus_5min
+    filtered_df = filtered_df[filtered_df['TradeTime'] > time_now_plus_5min]
 
     match = filtered_df[(filtered_df['LastPrice'] == price) & (filtered_df['Volume'] == volume)]
 
@@ -265,16 +268,20 @@ def buy_stock(stock_name, volume, price, initial_balance):
                 current_time = time_now
                 last_price = None
 
-                while last_price is None:
-                    filtered_df = df[(df['ShareCode'] == stock_in_portfolio) & (df['Flag'] == "Sell") &
-                                    (pd.to_datetime(df['TradeDateTime']).dt.time == current_time)]
-                    
-                    if not filtered_df.empty:
-                        last_price = filtered_df.iloc[0]['LastPrice']
-                    else:
-                        # ลด current_time ลงทีละ 1 วินาที
-                        current_time = (datetime.combine(datetime(1, 1, 1), current_time) - timedelta(seconds=1)).time()
+                filtered_df = df[(df['ShareCode'] == stock_in_portfolio) & (df['Flag'] == "Sell")].copy()
+                filtered_df['TimeOnly'] = pd.to_datetime(filtered_df['TradeDateTime']).dt.time
+
+                if not filtered_df.empty:
+                    # คำนวณความแตกต่างของเวลา
+                    filtered_df['time_diff'] = filtered_df['TimeOnly'].apply(
+                        lambda t: abs((datetime.combine(datetime.min, t) - datetime.combine(datetime.min, current_time)).total_seconds())
+                    )
+
+                    # หาแถวที่มีเวลาต่างกันน้อยที่สุด
+                    closest_row = filtered_df.loc[filtered_df['time_diff'].idxmin()]
+                    last_price = closest_row['LastPrice']
                 
+                # หากพบราคา (last_price) จะคำนวณมูลค่าตลาด
                 if last_price is not None:
                     market_value += portfolio[stock_in_portfolio]['volume'] * last_price
 
@@ -330,16 +337,20 @@ def sell_stock(stock_name, volume, price, initial_balance):
                     current_time = time_now
                     last_price = None
 
-                    while last_price is None:
-                        filtered_df = df[(df['ShareCode'] == stock_in_portfolio) & (df['Flag'] == "Buy") &
-                                        (pd.to_datetime(df['TradeDateTime']).dt.time == current_time)]
-                        
-                        if not filtered_df.empty:
-                            last_price = filtered_df.iloc[0]['LastPrice']
-                        else:
-                            # ลด current_time ลงทีละ 1 วินาที
-                            current_time = (datetime.combine(datetime(1, 1, 1), current_time) - timedelta(seconds=1)).time()
+                    filtered_df = df[(df['ShareCode'] == stock_in_portfolio) & (df['Flag'] == "Buy")].copy()
+                    filtered_df['TimeOnly'] = pd.to_datetime(filtered_df['TradeDateTime']).dt.time
+
+                    if not filtered_df.empty:
+                        # คำนวณความแตกต่างของเวลา
+                        filtered_df['time_diff'] = filtered_df['TimeOnly'].apply(
+                            lambda t: abs((datetime.combine(datetime.min, t) - datetime.combine(datetime.min, current_time)).total_seconds())
+                        )
+
+                        # หาแถวที่มีเวลาต่างกันน้อยที่สุด
+                        closest_row = filtered_df.loc[filtered_df['time_diff'].idxmin()]
+                        last_price = closest_row['LastPrice']
                     
+                    # หากพบราคา (last_price) จะคำนวณมูลค่าตลาด
                     if last_price is not None:
                         market_value += portfolio[stock_in_portfolio]['volume'] * last_price
                 
@@ -364,6 +375,9 @@ def sell_stock(stock_name, volume, price, initial_balance):
 
 ################################################################ BUY - SELL ################################################################
 
+df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy')]
+df['TradeDateTime'] = pd.to_datetime(df['TradeDateTime'])
+
 # TEST CASE
 # initial_balance = buy_stock("ADVANC", 100, 295.0, initial_balance)
 # print(portfolio)
@@ -376,12 +390,9 @@ def sell_stock(stock_name, volume, price, initial_balance):
 # initial_balance = sell_stock("ADVANC", 100, 289.0, initial_balance)
 # print(portfolio)
 
-df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy')]
-df['TradeDateTime'] = pd.to_datetime(df['TradeDateTime'])
-
 MaFast_period = 1  # Fast moving average period
-MaSlow_period = 34  # Slow moving average period
-Signal_period = 5   # Signal line period
+MaSlow_period = 17  # Slow moving average period
+Signal_period = 6   # Signal line period
 
 # Clean Data and Generate Buy Sell Signal
 unique_sharecodes = list(df['ShareCode'].unique())
@@ -396,46 +407,49 @@ for uniq in unique_sharecodes:
     eq_df[uniq].columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Value']
     eq_df[uniq].reset_index(inplace=True)
 
-# Gen buy sell signals
-MaFast_period = 1  # Fast moving average period
-MaSlow_period = 16  # Slow moving average period
-Signal_period = 7   # Signal line period
-
-def sma(data, period):
-    return data.rolling(window=period).mean()
-
-for uniq in unique_sharecodes:
-    smaFast = sma(eq_df[uniq]['Close'], MaFast_period)
-    smaSlow = sma(eq_df[uniq]['Close'], MaSlow_period)
+    smaFast = eq_df[uniq]['Close'].rolling(window=MaFast_period).mean()
+    smaSlow = eq_df[uniq]['Close'].rolling(window=MaSlow_period).mean()
 
     buffer1 = smaFast - smaSlow
     buffer2 = buffer1.rolling(window=Signal_period).mean()
 
-    # ใช้ iloc เพื่อแทนการ shift
-    eq_df[uniq]['Buy_Signal'] = [
-        (buffer1.iloc[i] < buffer2.iloc[i]) & (buffer1.iloc[i-1] >= buffer2.iloc[i-1]) if i > 0 else False
-        for i in range(len(buffer1))
-    ]
-    eq_df[uniq]['Sell_Signal'] = [
-        (buffer1.iloc[i] > buffer2.iloc[i]) & (buffer1.iloc[i-1] <= buffer2.iloc[i-1]) if i > 0 else False
-        for i in range(len(buffer1))
-    ]
+    eq_df[uniq]['Buy_Signal'] = (buffer1 < buffer2) & (buffer1.shift(1) >= buffer2.shift(1))
+    eq_df[uniq]['Sell_Signal'] = (buffer1 > buffer2) & (buffer1.shift(1) <= buffer2.shift(1))
 
-    # ซื้อและขายตามสัญญาณ
-    for i in range(1, len(eq_df[uniq])):  # เริ่มจาก i=1 เพื่อหลีกเลี่ยงข้อผิดพลาดการเข้าถึงค่า buffer ที่ไม่ถูกต้อง
-        # สัญญาณซื้อ
-        if eq_df[uniq]['Buy_Signal'].iloc[i]:
-            price = eq_df[uniq]['Close'].iloc[i]
-            volume = 100  # จำนวนหุ้นที่ซื้อ
-            initial_balance = buy_stock(uniq, volume, price, initial_balance)
-        
-        # สัญญาณขาย
-        if eq_df[uniq]['Sell_Signal'].iloc[i]:
-            price = eq_df[uniq]['Close'].iloc[i]
-            volume = 100 # จำนวนหุ้นที่ขาย
-            initial_balance = sell_stock(uniq, volume, price, initial_balance)
+# buy sell from signal
+itr = {uniq: 0 for uniq in unique_sharecodes}
+money_per_turn = 1_000_000
+time_start = datetime.combine(date.today(), time(9, 55))
+is_finished = True
+while True:
+    for uniq in unique_sharecodes:
+        if itr[uniq] < len(eq_df[uniq]):
+            is_finished = False
+            series = eq_df[uniq].iloc[itr[uniq]]
+            trade_dt = datetime.time(series["TradeDateTime"])
+
+            if trade_dt == time_start.time():
+                if series["Buy_Signal"] == True:
+                    print(f"{time_start.time()}\t{uniq}\tbuy")
+                    price = series['Close'] 
+                    vol = 1000
+                    initial_balance = buy_stock(uniq, vol, price, initial_balance)
+
+                elif series["Sell_Signal"] == True:
+                    print(f"{time_start.time()}\t{uniq}\tsell")
+                    price = series['Close'] 
+                    vol = 1000
+                    initial_balance = sell_stock(uniq, vol, price, initial_balance)
+
+            if trade_dt <= time_start.time():
+                itr[uniq] += 1
+
+    if is_finished:
+        break
+    is_finished = True
+    time_start += timedelta(minutes=5)
     
-    # if time_now > datetime.strptime("14:00:00", "%H:%M:%S").time():
+    # if time_start.time() > datetime.strptime("14:40:00", "%H:%M:%S").time():
     #     break
 
 ################################################################################################################################
