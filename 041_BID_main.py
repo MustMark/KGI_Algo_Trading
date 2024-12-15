@@ -161,6 +161,7 @@ trading_day = 0
 portfolio = {}
 count_sell = 0
 count_win = 0
+previous_transactions = 0
 last_end_line_available = 0
 initial_investment = 10000000 
 
@@ -188,7 +189,11 @@ if prev_portfolio_df is not None:
 if prev_summary_df is not None:
 
     trading_day = prev_summary_df['trading_day'].iloc[0]
+    count_sell = prev_summary_df['Number of wins'].iloc[0]
+    count_win = prev_summary_df['Number of matched trades'].iloc[0]
+    previous_transactions = prev_summary_df['Number of transactions:'].iloc[0]
     if 'End Line available' in prev_summary_df.columns:
+
         # ดึงค่าคอลัมน์ 'End Line available' ทั้งหมด   
         initial_balance_series = prev_summary_df['End Line available']
         
@@ -233,7 +238,7 @@ def is_valid_transaction(stock_name, volume, price, transaction_type):
     # กรองข้อมูลที่มี TradeTime มากกว่า time_now_plus_5min
     filtered_df = filtered_df[filtered_df['TradeTime'] > time_now_plus_5min]
 
-    match = filtered_df[(filtered_df['LastPrice'] == price) & (filtered_df['Volume'] == volume)]
+    match = filtered_df[(filtered_df['LastPrice'] == price) & (filtered_df['Volume'] >= volume)]
 
     if not match.empty:
         return match['TradeDateTime'].iloc[0].strftime('%Y-%m-%d %H:%M:%S')
@@ -430,13 +435,13 @@ while True:
 
             if trade_dt == time_start.time():
                 if series["Buy_Signal"] == True:
-                    print(f"{time_start.time()}\t{uniq}\tbuy")
+                    print(f"{time_now}\t{uniq}\tbuy")
                     price = series['Close'] 
                     vol = 1000
                     initial_balance = buy_stock(uniq, vol, price, initial_balance)
 
                 elif series["Sell_Signal"] == True:
-                    print(f"{time_start.time()}\t{uniq}\tsell")
+                    print(f"{time_now}\t{uniq}\tsell")
                     price = series['Close'] 
                     vol = 1000
                     initial_balance = sell_stock(uniq, vol, price, initial_balance)
@@ -480,7 +485,7 @@ summary_data = {
     'Start Line available': [round(Start_Line_available, 4)],
     'Number of wins': [count_win], 
     'Number of matched trades': [count_sell], #นับ sell เพราะ เทรดbuy sellด้วย volume เท่ากัน
-    'Number of transactions:': [len(statement_df)],
+    'Number of transactions:': [previous_transactions + len(statement_df)],
     'Net Amount': [round(statement_df['Amount Cost'].sum(), 4)],
     'Unrealized P/L': [round(portfolio_df['Unrealized P/L'].sum(), 4)],
     '% Unrealized P/L': [round((portfolio_df['Unrealized P/L'].sum() / initial_investment * 100) if initial_investment else 0, 4)],
