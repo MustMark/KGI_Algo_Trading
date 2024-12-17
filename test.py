@@ -182,8 +182,8 @@ time_now = datetime.combine(date.today(), time(10, 00))
 
 timeframe = 5
 MaFast_period = 1  # Fast moving average period
-MaSlow_period = 8  # Slow moving average period
-Signal_period = 4   # Signal line period
+MaSlow_period = 34  # Slow moving average period
+Signal_period = 8   # Signal line period
 
 unique_df =  {}
 for uniq in unique_sharecodes:
@@ -250,17 +250,14 @@ else:
 def filter_dataframe(stock_name, price, transaction_type):
 
     global time_now
-
-    filtered_df = unique_df[stock_name]
-    filtered_df = filtered_df[filtered_df['Flag'] == transaction_type]
-
-
     time_least = (time_now + timedelta(minutes=timeframe)).time()
     time_max = (time_now + timedelta(minutes=2*timeframe)).time()
+    
+    filtered_df = unique_df[stock_name]
+    filtered_df = filtered_df[(filtered_df['Flag'] == transaction_type) & (filtered_df['TradeTime'] >= time_least) & (filtered_df['TradeTime'] < time_max)]
 
     # กรองข้อมูลที่มี TradeTime มากกว่า time_now_plus_5min
-    filtered_df = filtered_df[filtered_df['TradeTime'] >= time_least]
-    filtered_df = filtered_df[filtered_df['TradeTime'] < time_max]
+    # filtered_df = filtered_df[(filtered_df['TradeTime'] >= time_least) & (filtered_df['TradeTime'] < time_max)]
 
     if transaction_type == "Sell":
         filtered_df = filtered_df[filtered_df['LastPrice'] <= price]
@@ -272,7 +269,7 @@ def filter_dataframe(stock_name, price, transaction_type):
 def buy_stock(stock_name, volume, price, initial_balance, match_time: datetime):
     
     if initial_balance < volume * price:
-        print("Not enough balance to buy stock.")
+        # print("Not enough balance to buy stock.")
         return initial_balance
     
     initial_balance -= volume * price
@@ -300,7 +297,6 @@ def buy_stock(stock_name, volume, price, initial_balance, match_time: datetime):
             filtered_df.loc[:, 'time_diff'] = filtered_df['TradeTime'].apply(
                 lambda t: abs((datetime.combine(datetime.min, t) - datetime.combine(datetime.min, current_time)).total_seconds())
             )
-
             filtered_df = filtered_df[filtered_df['TradeTime'] <= current_time]
 
             # หาแถวที่มีเวลาต่างกันน้อยที่สุด
@@ -312,8 +308,8 @@ def buy_stock(stock_name, volume, price, initial_balance, match_time: datetime):
             market_value += portfolio[stock_in_portfolio]['volume'] * last_price
 
     update_statement(stock_name, match_time, "Buy", volume, portfolio[stock_name]['volume'], price, initial_balance, market_value)
-    print(f"Bought {volume} shares of {stock_name} at {price} THB.")
-    print(f"Remaining balance: {initial_balance} THB.")
+    # print(f"Bought {volume} shares of {stock_name} at {price} THB.")
+    # print(f"Remaining balance: {initial_balance} THB.")
     return initial_balance
         # pass
 
@@ -357,7 +353,6 @@ def sell_stock(stock_name, volume, price, initial_balance, match_time: datetime)
                     lambda t: abs((datetime.combine(datetime.min, t) - datetime.combine(datetime.min, current_time)).total_seconds())
                 )
                 # filtered_df['time_diff'] =  abs((datetime.combine(datetime.min, filtered_df['TradeTime']) - datetime.combine(datetime.min, current_time)).total_seconds())
-                
                 filtered_df = filtered_df[filtered_df['TradeTime'] <= current_time]
 
                 # หาแถวที่มีเวลาต่างกันน้อยที่สุด
@@ -373,10 +368,10 @@ def sell_stock(stock_name, volume, price, initial_balance, match_time: datetime)
         else:
             actual_vol = portfolio[stock_name]['volume']
         update_statement(stock_name, match_time, "Sell", volume, actual_vol, price, initial_balance, market_value)
-        print(f"Sold {volume} shares of {stock_name} at {price} THB.")
-        print(f"New balance: {initial_balance} THB.")
+        # print(f"Sold {volume} shares of {stock_name} at {price} THB.")
+        # print(f"New balance: {initial_balance} THB.")
     else:
-        print(f"{stock_name} not in portfolio.")
+        # print(f"{stock_name} not in portfolio.")
         pass
     return initial_balance
 
@@ -385,7 +380,7 @@ def create_buy_stock(stock_name, volume, price):
     # ซื้อไม่ได้ถ้าเงินน้อย
     global initial_balance
     if initial_balance < volume * price:
-        print("Not enough balance to buy stock.")
+        # print("Not enough balance to buy stock.")
         return 
     
     # ตรวจสอบการทำธุรกรรมก่อนซื้อ
@@ -406,7 +401,7 @@ def create_buy_stock(stock_name, volume, price):
                     transaction_q.append({"type": "Buy", "series": row, "vol": exist_vol})
                 break
     else:
-        print(f"Buy {stock_name} failed. Invalid transaction.")
+        # print(f"Buy {stock_name} failed. Invalid transaction.")
         pass
 
 # ฟังก์ชันสร้างการขายหุ้น
@@ -431,10 +426,10 @@ def create_sell_stock(stock_name, price):
                         transaction_q.append({"type": "Sell", "series": row, "vol": exist_vol})
                     break
         else:
-            print(f"Buy {stock_name} failed. Invalid transaction.")
+            # print(f"Buy {stock_name} failed. Invalid transaction.")
             pass
     else:
-        print(f"{stock_name} not in portfolio.")
+        # print(f"{stock_name} not in portfolio.")
         pass
 
 # ฟังชันก์รันคิวซื้อขาย
@@ -494,17 +489,21 @@ while True:
             trade_dt = datetime.time(series["TradeDateTime"])
 
             if trade_dt == time_now.time():
-                if series["Buy_Signal"] == True:
-                    print(f"{time_now}\t{uniq}\tbuy")
+                if series["Buy_Signal"] == True and time_now.time() < time(16, 00):
+                # if series["Buy_Signal"] == True:
+                    # print(f"{time_now}\t{uniq}\tbuy")
                     price = series['Close'] 
-                    vol = (money_per_turn * 100)//(price * 100)    # เอาหุ้น 100 หุ้นเป็นต้นไป
+                    if initial_balance >= money_per_turn:
+                        vol = (money_per_turn * 100)//(price * 100)    # เอาหุ้น 100 หุ้นเป็นต้นไป
+                    else:
+                        vol = (initial_balance * 100)//(price * 100)    # เอาหุ้น 100 หุ้นเป็นต้นไป
                     # buy_stock(uniq, vol, price, initial_balance)
-                    create_buy_stock(uniq, vol, price)
+                    if vol >= 100:
+                        create_buy_stock(uniq, vol, price)
 
                 elif series["Sell_Signal"] == True:
-                    print(f"{time_now}\t{uniq}\tsell")
+                    # print(f"{time_now}\t{uniq}\tsell")
                     price = series['Close'] 
-                    # initial_balance = sell_stock(uniq, price, initial_balance)
                     create_sell_stock(uniq, price)
 
             if trade_dt <= time_now.time():
@@ -515,6 +514,7 @@ while True:
     initial_balance = running_buy_sell(transaction_q, initial_balance)
     transaction_q = []
     is_finished = True
+    print(time_now.time())
     time_now += timedelta(minutes=timeframe)
 
 ################################################## End ##############################################################################
