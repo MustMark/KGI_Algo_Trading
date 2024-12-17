@@ -158,6 +158,7 @@ def update_statement(stock_name, datetime ,side, volume, actual_vol,price, initi
 
 time_now = datetime.strptime("00:00:00", "%H:%M:%S").time()
 trading_day = 0
+start_portfolio = {} #สำหรับ วันที่ 2 เป็นต้นไป
 portfolio = {}
 count_sell = 0
 count_win = 0
@@ -180,6 +181,9 @@ if prev_portfolio_df is not None:
         realized_PL = float(row.iloc[11]) 
         
         # เพิ่มข้อมูลลงใน portfolio
+        start_portfolio[stock_name] = {
+            'volume': volume
+        }
         portfolio[stock_name] = {
             'volume': volume,
             'price': price,

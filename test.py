@@ -159,6 +159,7 @@ def update_statement(stock_name, datetime ,side, volume, actual_vol,price, initi
 
 # time_now = datetime.strptime("00:00:00", "%H:%M:%S").time()
 trading_day = 0
+start_portfolio = {} #สำหรับ วันที่ 2 เป็นต้นไป
 portfolio = {}
 transaction_q = []
 count_sell = 0
@@ -200,6 +201,9 @@ if prev_portfolio_df is not None:
         realized_PL = float(row.iloc[11]) 
         
         # เพิ่มข้อมูลลงใน portfolio
+        start_portfolio[stock_name] = {
+            'volume': volume
+        }
         portfolio[stock_name] = {
             'volume': volume,
             'price': price,
@@ -209,8 +213,8 @@ if prev_portfolio_df is not None:
 if prev_summary_df is not None:
 
     trading_day = prev_summary_df['trading_day'].iloc[0]
-    count_sell = prev_summary_df['Number of wins'].iloc[0]
-    count_win = prev_summary_df['Number of matched trades'].iloc[0]
+    count_win = prev_summary_df['Number of wins'].iloc[0]
+    count_sell = prev_summary_df['Number of matched trades'].iloc[0]
     previous_transactions = prev_summary_df['Number of transactions:'].iloc[0]
     if 'End Line available' in prev_summary_df.columns:
 
@@ -297,6 +301,8 @@ def buy_stock(stock_name, volume, price, initial_balance, match_time: datetime):
                 lambda t: abs((datetime.combine(datetime.min, t) - datetime.combine(datetime.min, current_time)).total_seconds())
             )
 
+            filtered_df = filtered_df[filtered_df['TradeTime'] <= current_time]
+
             # หาแถวที่มีเวลาต่างกันน้อยที่สุด
             closest_row = filtered_df.loc[filtered_df['time_diff'].idxmin()]
             last_price = closest_row['LastPrice']
@@ -351,6 +357,8 @@ def sell_stock(stock_name, volume, price, initial_balance, match_time: datetime)
                     lambda t: abs((datetime.combine(datetime.min, t) - datetime.combine(datetime.min, current_time)).total_seconds())
                 )
                 # filtered_df['time_diff'] =  abs((datetime.combine(datetime.min, filtered_df['TradeTime']) - datetime.combine(datetime.min, current_time)).total_seconds())
+                
+                filtered_df = filtered_df[filtered_df['TradeTime'] <= current_time]
 
                 # หาแถวที่มีเวลาต่างกันน้อยที่สุด
                 closest_row = filtered_df.loc[filtered_df['time_diff'].idxmin()]
@@ -489,7 +497,7 @@ while True:
                 if series["Buy_Signal"] == True:
                     print(f"{time_now}\t{uniq}\tbuy")
                     price = series['Close'] 
-                    vol = (money_per_turn*100)//(price*100)    # เอาหุ้น 100 หุ้นเป็นต้นไป
+                    vol = (money_per_turn * 100)//(price * 100)    # เอาหุ้น 100 หุ้นเป็นต้นไป
                     # buy_stock(uniq, vol, price, initial_balance)
                     create_buy_stock(uniq, vol, price)
 
@@ -508,19 +516,20 @@ while True:
     transaction_q = []
     is_finished = True
     time_now += timedelta(minutes=timeframe)
-    
-    # if time_now.time() > datetime.strptime("14:40:00", "%H:%M:%S").time():
-    #     break
 
-################################################################################################################################
+################################################## End ##############################################################################
 
 for stock_name in portfolio:
 
+    actual_vol = 0 
     total_volume = portfolio[stock_name]['volume']
     total_price = portfolio[stock_name]['price']
     total_realized_PL = portfolio[stock_name]['realized_PL']
 
-    add_stock_to_portfolio(stock_name, 0, total_volume, total_price, total_realized_PL)
+    if stock_name in start_portfolio:
+        actual_vol = start_portfolio[stock_name]['volume']
+
+    add_stock_to_portfolio(stock_name, actual_vol, total_volume, total_price, total_realized_PL)
 
 portfolio_df = pd.DataFrame(portfolio_data)
 statement_df = pd.DataFrame(statement_data)
@@ -556,7 +565,8 @@ summary_data = {
 }
 
 summary_df = pd.DataFrame(summary_data)
-################################################## End Ex Create and Save ##############################################################################
+
+################################################## Save ##############################################################################
 
 save_output(portfolio_df, "portfolio", team_name)
 save_output(statement_df, "statement", team_name)
