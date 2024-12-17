@@ -136,7 +136,8 @@ def add_stock_to_portfolio(stock_name, start_vol, actual_vol, avg_cost, realized
 
 def update_statement(stock_name, datetime ,side, volume, actual_vol,price, initial_balance, market_value):
 
-    date, time = datetime.split()
+    date = datetime.date()
+    time = datetime.time()
     amount_cost = volume * price
     nav = initial_balance + market_value
 
@@ -156,18 +157,38 @@ def update_statement(stock_name, datetime ,side, volume, actual_vol,price, initi
 
 ################################################################ START ################################################################
 
-time_now = datetime.strptime("00:00:00", "%H:%M:%S").time()
+# time_now = datetime.strptime("00:00:00", "%H:%M:%S").time()
 trading_day = 0
 portfolio = {}
+transaction_q = []
 count_sell = 0
 count_win = 0
+previous_transactions = 0
 last_end_line_available = 0
 initial_investment = 10000000 
 
+# prepare dataframe
 file_path = '~/Desktop/Daily_Ticks.csv' 
 df = pd.read_csv(file_path)
+df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy')]
+df['TradeDateTime'] = pd.to_datetime(df['TradeDateTime'])
+df["TradeTime"] = df['TradeDateTime'].dt.time
 
-# Load file
+unique_sharecodes = list(df['ShareCode'].unique())
+itr = {uniq: 0 for uniq in unique_sharecodes}
+money_per_turn = 1_000_000
+time_now = datetime.combine(date.today(), time(10, 00))
+
+timeframe = 5
+MaFast_period = 8  # Fast moving average period
+MaSlow_period = 38  # Slow moving average period
+Signal_period = 9   # Signal line period
+
+unique_df =  {}
+for uniq in unique_sharecodes:
+    unique_df[uniq] = df[df['ShareCode'] == uniq]
+
+############################################################### Load file ################################################################ 
 prev_portfolio_df = load_previous("portfolio", team_name)
 prev_summary_df = load_previous("summary", team_name)
 
@@ -188,7 +209,11 @@ if prev_portfolio_df is not None:
 if prev_summary_df is not None:
 
     trading_day = prev_summary_df['trading_day'].iloc[0]
+    count_sell = prev_summary_df['Number of wins'].iloc[0]
+    count_win = prev_summary_df['Number of matched trades'].iloc[0]
+    previous_transactions = prev_summary_df['Number of transactions:'].iloc[0]
     if 'End Line available' in prev_summary_df.columns:
+
         # ดึงค่าคอลัมน์ 'End Line available' ทั้งหมด   
         initial_balance_series = prev_summary_df['End Line available']
         
@@ -218,150 +243,205 @@ else:
 
 ################################################################ BUY - SELL FUNCTION ################################################################
 
-def is_valid_transaction(stock_name, volume, price, transaction_type):
+def filter_dataframe(stock_name, price, transaction_type):
 
     global time_now
 
-    filtered_df = df[df['ShareCode'] == stock_name]
-    
+    filtered_df = unique_df[stock_name]
     filtered_df = filtered_df[filtered_df['Flag'] == transaction_type]
-    
-    filtered_df['TradeTime'] = pd.to_datetime(filtered_df['TradeDateTime']).dt.time
 
-    filtered_df = filtered_df[filtered_df['TradeTime'] > time_now]
 
-    match = filtered_df[(filtered_df['LastPrice'] == price) & (filtered_df['Volume'] == volume)]
+    time_least = (time_now + timedelta(minutes=timeframe)).time()
+    time_max = (time_now + timedelta(minutes=2*timeframe)).time()
 
-    if not match.empty:
-        return match['TradeDateTime'].iloc[0].strftime('%Y-%m-%d %H:%M:%S')
+    # กรองข้อมูลที่มี TradeTime มากกว่า time_now_plus_5min
+    filtered_df = filtered_df[filtered_df['TradeTime'] >= time_least]
+    filtered_df = filtered_df[filtered_df['TradeTime'] < time_max]
+
+    if transaction_type == "Sell":
+        filtered_df = filtered_df[filtered_df['LastPrice'] <= price]
     else:
-        return None
+        filtered_df = filtered_df[filtered_df['LastPrice'] >= price]
+    return filtered_df
 
 # ฟังก์ชันซื้อหุ้น
-def buy_stock(stock_name, volume, price, initial_balance):
-    # ตรวจสอบการทำธุรกรรมก่อนซื้อ
-    match_time = is_valid_transaction(stock_name, volume, price, "Sell")
-    if match_time:
-        # ตรวจสอบยอดเงินคงเหลือ
-        if initial_balance >= volume * price:
-            initial_balance -= volume * price
-            if stock_name in portfolio:
-                portfolio[stock_name]['price'] = ((portfolio[stock_name]['volume'] * portfolio[stock_name]['price']) + (volume * price)) / (portfolio[stock_name]['volume'] + volume)
-                portfolio[stock_name]['volume'] += volume
-            else:
-                portfolio[stock_name] = {
-                    'volume': volume,
-                    'price': price,
-                    'realized_PL' : 0
-                }
-
-            global time_now
-
-            time_now = datetime.strptime(match_time, "%Y-%m-%d %H:%M:%S").time()
-            
-            market_value = 0
-
-            for stock_in_portfolio in portfolio:
-                current_time = time_now
-                last_price = None
-
-                while last_price is None:
-                    filtered_df = df[(df['ShareCode'] == stock_in_portfolio) & (df['Flag'] == "Sell") &
-                                    (pd.to_datetime(df['TradeDateTime']).dt.time == current_time)]
-                    
-                    if not filtered_df.empty:
-                        last_price = filtered_df.iloc[0]['LastPrice']
-                    else:
-                        # ลด current_time ลงทีละ 1 วินาที
-                        current_time = (datetime.combine(datetime(1, 1, 1), current_time) - timedelta(seconds=1)).time()
-                
-                if last_price is not None:
-                    market_value += portfolio[stock_in_portfolio]['volume'] * last_price
-
-            update_statement(stock_name, match_time, "Buy", volume, portfolio[stock_name]['volume'], price, initial_balance, market_value)
-            # print(f"Bought {volume} shares of {stock_name} at {price} THB.")
-            # print(f"Remaining balance: {initial_balance} THB.")
-        else:
-            # print("Not enough balance to buy stock.")
-            pass
-    else:
-        # print(f"Buy {stock_name} failed. Invalid transaction.")
-        pass
+def buy_stock(stock_name, volume, price, initial_balance, match_time: datetime):
     
+    if initial_balance < volume * price:
+        print("Not enough balance to buy stock.")
+        return initial_balance
+    
+    initial_balance -= volume * price
+    if stock_name in portfolio:
+        portfolio[stock_name]['price'] = ((portfolio[stock_name]['volume'] * portfolio[stock_name]['price']) + (volume * price)) / (portfolio[stock_name]['volume'] + volume)
+        portfolio[stock_name]['volume'] += volume
+    else:
+        portfolio[stock_name] = {
+            'volume': volume,
+            'price': price,
+            'realized_PL' : 0
+        }
+
+    market_value = 0
+
+    for stock_in_portfolio in portfolio:
+        current_time = match_time.time()
+        last_price = None
+
+        filtered_df = unique_df[stock_in_portfolio]
+        filtered_df = filtered_df[filtered_df['Flag'] == "Sell"].copy()
+
+        if not filtered_df.empty:
+            # คำนวณความแตกต่างของเวลา
+            filtered_df.loc[:, 'time_diff'] = filtered_df['TradeTime'].apply(
+                lambda t: abs((datetime.combine(datetime.min, t) - datetime.combine(datetime.min, current_time)).total_seconds())
+            )
+
+            # หาแถวที่มีเวลาต่างกันน้อยที่สุด
+            closest_row = filtered_df.loc[filtered_df['time_diff'].idxmin()]
+            last_price = closest_row['LastPrice']
+        
+        # หากพบราคา (last_price) จะคำนวณมูลค่าตลาด
+        if last_price is not None:
+            market_value += portfolio[stock_in_portfolio]['volume'] * last_price
+
+    update_statement(stock_name, match_time, "Buy", volume, portfolio[stock_name]['volume'], price, initial_balance, market_value)
+    print(f"Bought {volume} shares of {stock_name} at {price} THB.")
+    print(f"Remaining balance: {initial_balance} THB.")
     return initial_balance
+        # pass
 
 # ฟังก์ชันขายหุ้น
-def sell_stock(stock_name, volume, price, initial_balance):
+def sell_stock(stock_name, volume, price, initial_balance, match_time: datetime):
     # ตรวจสอบว่ามีหุ้นในพอร์ตหรือไม่ และจำนวนพอขาย
     if stock_name in portfolio:
-        actual_volume = portfolio[stock_name]['volume']
+        global count_sell
+        global count_win
+
+        money_received = volume * price
         
-        if actual_volume >= volume:
-            match_time = is_valid_transaction(stock_name, volume, price, "Buy")
-            if match_time:
-                # คำนวณเงินที่ได้จากการขาย
-                money_received = volume * price
-                
-                # เพิ่มเงินเข้าไปในยอดคงเหลือ
-                initial_balance += money_received
-                
-                # อัพเดตข้อมูลในพอร์ตชั่วคราว (ลดจำนวนหุ้นในพอร์ต)
-                new_actual_volume = actual_volume - volume
-                if new_actual_volume == 0:
-                    del portfolio[stock_name]  # ลบหุ้นออกจากพอร์ตถ้าขายหมด
-                else:
-                    portfolio[stock_name]['volume'] = new_actual_volume
-                    portfolio[stock_name]['realized_PL'] += money_received - (portfolio[stock_name]['price'] * volume)
-            
-                global time_now
-                global count_sell
-                global count_win
-                
-                time_now = datetime.strptime(match_time, "%Y-%m-%d %H:%M:%S").time()
+        # เพิ่มเงินเข้าไปในยอดคงเหลือ
+        initial_balance += money_received
         
-                count_sell += 1     
+        count_sell += 1     
 
-                if money_received > 0:
-                    count_win += 1
-                
-                market_value = 0
+        if price > portfolio[stock_name]['price']:
+            count_win += 1
 
-                for stock_in_portfolio in portfolio:
-                    current_time = time_now
-                    last_price = None
-
-                    while last_price is None:
-                        filtered_df = df[(df['ShareCode'] == stock_in_portfolio) & (df['Flag'] == "Buy") &
-                                        (pd.to_datetime(df['TradeDateTime']).dt.time == current_time)]
-                        
-                        if not filtered_df.empty:
-                            last_price = filtered_df.iloc[0]['LastPrice']
-                        else:
-                            # ลด current_time ลงทีละ 1 วินาที
-                            current_time = (datetime.combine(datetime(1, 1, 1), current_time) - timedelta(seconds=1)).time()
-                    
-                    if last_price is not None:
-                        market_value += portfolio[stock_in_portfolio]['volume'] * last_price
-                
-                if stock_name not in portfolio:
-                    actual_vol = 0
-                else:
-                    actual_vol = portfolio[stock_name]['volume']
-                update_statement(stock_name, match_time, "Sell", volume, actual_vol, price, initial_balance, market_value)
-                # print(f"Sold {volume} shares of {stock_name} at {price} THB.")
-                # print(f"New balance: {initial_balance} THB.")
-            else:
-                # print(f"Sell {stock_name} failed.")
-                pass
+        # อัพเดตข้อมูลในพอร์ตชั่วคราว (ลดจำนวนหุ้นในพอร์ต)
+        new_actual_volume = portfolio[stock_name]['volume'] - volume
+        if new_actual_volume == 0:
+            del portfolio[stock_name]  # ลบหุ้นออกจากพอร์ตถ้าขายหมด
         else:
-            # print("Not enough shares in portfolio to sell.")
-            pass
+            portfolio[stock_name]['volume'] = new_actual_volume
+            portfolio[stock_name]['realized_PL'] += money_received - (portfolio[stock_name]['price'] * volume)
+        
+        market_value = 0
+
+        for stock_in_portfolio in portfolio:
+            current_time = match_time.time()
+            last_price = None
+
+            filtered_df = unique_df[stock_in_portfolio]
+            filtered_df = filtered_df[filtered_df['Flag'] == "Buy"].copy()
+
+            if not filtered_df.empty:
+                # คำนวณความแตกต่างของเวลา
+                filtered_df.loc[:, 'time_diff'] = filtered_df['TradeTime'].apply(
+                    lambda t: abs((datetime.combine(datetime.min, t) - datetime.combine(datetime.min, current_time)).total_seconds())
+                )
+                # filtered_df['time_diff'] =  abs((datetime.combine(datetime.min, filtered_df['TradeTime']) - datetime.combine(datetime.min, current_time)).total_seconds())
+
+                # หาแถวที่มีเวลาต่างกันน้อยที่สุด
+                closest_row = filtered_df.loc[filtered_df['time_diff'].idxmin()]
+                last_price = closest_row['LastPrice']
+            
+            # หากพบราคา (last_price) จะคำนวณมูลค่าตลาด
+            if last_price is not None:
+                market_value += portfolio[stock_in_portfolio]['volume'] * last_price
+        
+        if stock_name not in portfolio:
+            actual_vol = 0
+        else:
+            actual_vol = portfolio[stock_name]['volume']
+        update_statement(stock_name, match_time, "Sell", volume, actual_vol, price, initial_balance, market_value)
+        print(f"Sold {volume} shares of {stock_name} at {price} THB.")
+        print(f"New balance: {initial_balance} THB.")
     else:
-        # print(f"{stock_name} not in portfolio.")
+        print(f"{stock_name} not in portfolio.")
         pass
-    
     return initial_balance
 
+# ฟังก์ชันสร้างการซื้อหุ้น
+def create_buy_stock(stock_name, volume, price):
+    # ซื้อไม่ได้ถ้าเงินน้อย
+    global initial_balance
+    if initial_balance < volume * price:
+        print("Not enough balance to buy stock.")
+        return 
+    
+    # ตรวจสอบการทำธุรกรรมก่อนซื้อ
+    filtered_df = filter_dataframe(stock_name, price, "Sell")
+    if not filtered_df.empty:
+        canbuy_vol = 0
+        total_cost = 0
+        for idx, row in filtered_df.iterrows():
+            if canbuy_vol + row["Volume"] <= volume:
+                canbuy_vol += row["Volume"]
+                total_cost += (row["Volume"]*row["LastPrice"])
+                transaction_q.append({"type": "Buy", "series": row, "vol": row["Volume"]})
+            else:
+                exist_vol = 100*(volume - canbuy_vol)//100
+                if exist_vol >= 100:
+                    canbuy_vol = volume
+                    total_cost = (exist_vol*row["LastPrice"])
+                    transaction_q.append({"type": "Buy", "series": row, "vol": exist_vol})
+                break
+    else:
+        print(f"Buy {stock_name} failed. Invalid transaction.")
+        pass
+
+# ฟังก์ชันสร้างการขายหุ้น
+def create_sell_stock(stock_name, price):
+    # ตรวจสอบการทำธุรกรรมก่อนซื้อ
+    if stock_name in portfolio:
+        filtered_df = filter_dataframe(stock_name, price, "Buy")
+        if not filtered_df.empty:
+            volume = portfolio[stock_name]['volume']
+            cansell_vol = 0
+            total_cost = 0
+            for idx, row in filtered_df.iterrows():
+                if cansell_vol + row["Volume"] <= volume:
+                    cansell_vol += row["Volume"]
+                    total_cost += (row["Volume"]*row["LastPrice"])
+                    transaction_q.append({"type": "Sell", "series": row, "vol": row["Volume"]})
+                else:
+                    exist_vol = volume - cansell_vol
+                    if exist_vol >= 100:
+                        cansell_vol = volume
+                        total_cost = (exist_vol*row["LastPrice"])
+                        transaction_q.append({"type": "Sell", "series": row, "vol": exist_vol})
+                    break
+        else:
+            print(f"Buy {stock_name} failed. Invalid transaction.")
+            pass
+    else:
+        print(f"{stock_name} not in portfolio.")
+        pass
+
+# ฟังชันก์รันคิวซื้อขาย
+def running_buy_sell(transaction_q, initial_balance):
+    transaction_q = sorted(transaction_q, key=lambda t: t["series"]["TradeDateTime"])
+    while transaction_q:
+        top = transaction_q.pop(0)
+        series = top["series"]
+        if top["type"] == "Sell":
+            # sell_stock(stock_name, volume, price, initial_balance, match_time: datetime)
+            initial_balance = sell_stock(series["ShareCode"], top["vol"], series["LastPrice"], initial_balance, series["TradeDateTime"])
+        elif top["type"] == "Buy":
+            initial_balance = buy_stock(series["ShareCode"], top["vol"], series["LastPrice"], initial_balance, series["TradeDateTime"])
+
+    return initial_balance
 ################################################################ BUY - SELL ################################################################
 
 # TEST CASE
@@ -376,19 +456,10 @@ def sell_stock(stock_name, volume, price, initial_balance):
 # initial_balance = sell_stock("ADVANC", 100, 289.0, initial_balance)
 # print(portfolio)
 
-df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy')]
-df['TradeDateTime'] = pd.to_datetime(df['TradeDateTime'])
-
-MaFast_period = 1  # Fast moving average period
-MaSlow_period = 34  # Slow moving average period
-Signal_period = 5   # Signal line period
-
 # Clean Data and Generate Buy Sell Signal
-unique_sharecodes = list(df['ShareCode'].unique())
 eq_df = {}
 for uniq in unique_sharecodes:
-    eq_df[uniq] = df[df['ShareCode'] == uniq]
-    eq_df[uniq] = eq_df[uniq].resample('5min', on='TradeDateTime').agg({
+    eq_df[uniq] = unique_df[uniq].resample(f'{timeframe}min', on='TradeDateTime').agg({
         'LastPrice': ['first', 'max', 'min', 'last'],  # Open, High, Low, Close
         'Volume': 'sum',
         'Value': 'sum'
@@ -406,9 +477,6 @@ for uniq in unique_sharecodes:
     eq_df[uniq]['Sell_Signal'] = (buffer1 > buffer2) & (buffer1.shift(1) <= buffer2.shift(1))
 
 # buy sell from signal
-itr = {uniq: 0 for uniq in unique_sharecodes}
-money_per_turn = 1_000_000
-time_start = datetime.combine(date.today(), time(9, 55))
 is_finished = True
 while True:
     for uniq in unique_sharecodes:
@@ -417,29 +485,32 @@ while True:
             series = eq_df[uniq].iloc[itr[uniq]]
             trade_dt = datetime.time(series["TradeDateTime"])
 
-            if trade_dt == time_start.time():
+            if trade_dt == time_now.time():
                 if series["Buy_Signal"] == True:
-                    print(f"{time_start.time()}\t{uniq}\tbuy")
+                    print(f"{time_now}\t{uniq}\tbuy")
                     price = series['Close'] 
-                    vol = 100
-                    # initial_balance = buy_stock(uniq, vol, price, initial_balance)
+                    vol = (money_per_turn*100)//(price*100)    # เอาหุ้น 100 หุ้นเป็นต้นไป
+                    # buy_stock(uniq, vol, price, initial_balance)
+                    create_buy_stock(uniq, vol, price)
 
                 elif series["Sell_Signal"] == True:
-                    print(f"{time_start.time()}\t{uniq}\tsell")
+                    print(f"{time_now}\t{uniq}\tsell")
                     price = series['Close'] 
-                    vol = 100
-                    # initial_balance = sell_stock(uniq, vol, price, initial_balance)
+                    # initial_balance = sell_stock(uniq, price, initial_balance)
+                    create_sell_stock(uniq, price)
 
-            if trade_dt <= time_start.time():
+            if trade_dt <= time_now.time():
                 itr[uniq] += 1
 
     if is_finished:
         break
+    initial_balance = running_buy_sell(transaction_q, initial_balance)
+    transaction_q = []
     is_finished = True
-    time_start += timedelta(minutes=5)
-
-
-
+    time_now += timedelta(minutes=timeframe)
+    
+    # if time_now.time() > datetime.strptime("14:40:00", "%H:%M:%S").time():
+    #     break
 
 ################################################################################################################################
 
@@ -469,7 +540,7 @@ summary_data = {
     'Start Line available': [round(Start_Line_available, 4)],
     'Number of wins': [count_win], 
     'Number of matched trades': [count_sell], #นับ sell เพราะ เทรดbuy sellด้วย volume เท่ากัน
-    'Number of transactions:': [len(statement_df)],
+    'Number of transactions:': [previous_transactions + len(statement_df)],
     'Net Amount': [round(statement_df['Amount Cost'].sum(), 4)],
     'Unrealized P/L': [round(portfolio_df['Unrealized P/L'].sum(), 4)],
     '% Unrealized P/L': [round((portfolio_df['Unrealized P/L'].sum() / initial_investment * 100) if initial_investment else 0, 4)],
