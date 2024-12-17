@@ -180,9 +180,9 @@ money_per_turn = 1_000_000
 time_now = datetime.combine(date.today(), time(10, 00))
 
 timeframe = 5
-MaFast_period = 8  # Fast moving average period
-MaSlow_period = 38  # Slow moving average period
-Signal_period = 9   # Signal line period
+MaFast_period = 1  # Fast moving average period
+MaSlow_period = 8  # Slow moving average period
+Signal_period = 4   # Signal line period
 
 unique_df =  {}
 for uniq in unique_sharecodes:
@@ -391,7 +391,7 @@ def create_buy_stock(stock_name, volume, price):
                 total_cost += (row["Volume"]*row["LastPrice"])
                 transaction_q.append({"type": "Buy", "series": row, "vol": row["Volume"]})
             else:
-                exist_vol = 100*(volume - canbuy_vol)//100
+                exist_vol = 100*((volume - canbuy_vol)//100)
                 if exist_vol >= 100:
                     canbuy_vol = volume
                     total_cost = (exist_vol*row["LastPrice"])
