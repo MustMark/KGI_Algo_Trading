@@ -178,7 +178,7 @@ df["TradeTime"] = df['TradeDateTime'].dt.time
 
 unique_sharecodes = list(df['ShareCode'].unique())
 itr = {uniq: 0 for uniq in unique_sharecodes}
-money_per_turn = 500_000
+money_per_turn = 200_000
 time_now = datetime.combine(date.today(), time(10, 00))
 
 timeframe = 1
@@ -427,8 +427,20 @@ def running_buy_sell(transaction_q, initial_balance):
 # TEST CASE
 # Clean Data and Generate Buy Sell Signal
 eq_df = {}
+
+# Calculate RSI
+def calculate_rsi(data):
+    delta = data['Close'].diff()
+    gain = delta.where(delta > 0, 0).rolling(window=14).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    data['RSI'] = rsi
+    return data
+
 for uniq in unique_sharecodes:
-    eq_df[uniq] = unique_df[uniq].resample(f'{timeframe}min', on='TradeDateTime').agg({
+    # Resample and aggregate data
+    eq_df[uniq] = unique_df[uniq].resample(f'{timeframe}s', on='TradeDateTime').agg({
         'LastPrice': ['first', 'max', 'min', 'last'],  # Open, High, Low, Close
         'Volume': 'sum',
         'Value': 'sum'
@@ -436,14 +448,26 @@ for uniq in unique_sharecodes:
     eq_df[uniq].columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Value']
     eq_df[uniq].reset_index(inplace=True)
 
+    # Calculate RSI
+    eq_df[uniq] = calculate_rsi(eq_df[uniq])
+
+    # Calculate SMA and buffers
     smaFast = eq_df[uniq]['Close'].rolling(window=MaFast_period).mean()
     smaSlow = eq_df[uniq]['Close'].rolling(window=MaSlow_period).mean()
-
     buffer1 = smaFast - smaSlow
     buffer2 = buffer1.rolling(window=Signal_period).mean()
 
-    eq_df[uniq]['Buy_Signal'] = (buffer1 < buffer2) & (buffer1.shift(1) >= buffer2.shift(1))
-    eq_df[uniq]['Sell_Signal'] = (buffer1 > buffer2) & (buffer1.shift(1) <= buffer2.shift(1))
+    # Generate Buy and Sell Signals
+    eq_df[uniq]['Buy_Signal'] = (
+        (buffer1 < buffer2) & 
+        (buffer1.shift(1) >= buffer2.shift(1)) &
+        (eq_df[uniq]['RSI'] < 40)  # RSI Oversold
+    )
+    eq_df[uniq]['Sell_Signal'] = (
+        (buffer1 > buffer2) & 
+        (buffer1.shift(1) <= buffer2.shift(1)) &
+        (eq_df[uniq]['RSI'] > 60)  # RSI Overbought
+    )
 
 # buy sell from signal
 is_finished = True
@@ -455,7 +479,7 @@ while True:
             trade_dt = datetime.time(series["TradeDateTime"])
 
             if trade_dt == time_now.time():
-                if series["Buy_Signal"] == True and time_now.time() < time(16, 00):
+                if series["Buy_Signal"] == True and time_now.time() < time(15, 00):
                 # if series["Buy_Signal"] == True:
                     # print(f"{time_now}\t{uniq}\tbuy")
                     price = series['Close'] 
@@ -477,11 +501,14 @@ while True:
 
     if is_finished:
         break
+    if time_now.time() == time(12, 30):
+        time_now += timedelta(hours=1)
+    
     initial_balance = running_buy_sell(transaction_q, initial_balance)
     transaction_q = []
     is_finished = True
     print(f"Time : {time_now.time()}, Win_rate : {round((count_win * 100) / count_sell, 4) if count_sell != 0 else 0}")
-    time_now += timedelta(minutes=timeframe)
+    time_now += timedelta(seconds=timeframe)
 
 ################################################## End ##############################################################################
 
