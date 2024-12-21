@@ -177,13 +177,13 @@ df["TradeTime"] = df['TradeDateTime'].dt.time
 
 unique_sharecodes = list(df['ShareCode'].unique())
 itr = {uniq: 0 for uniq in unique_sharecodes}
-money_per_turn = 500_000
+money_per_turn = 1_000_000
 time_now = datetime.combine(date.today(), time(10, 00))
 
 timeframe = 5
-EMA_FAST = 2
-EMA_SLOW = 23
-SIGNAL_PERIOD = 5
+MaFast_period = 1  # Fast moving average period
+MaSlow_period = 34  # Slow moving average period
+Signal_period = 8   # Signal line period
 
 unique_df =  {}
 for uniq in unique_sharecodes:
@@ -470,16 +470,14 @@ for uniq in unique_sharecodes:
     eq_df[uniq].columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Value']
     eq_df[uniq].reset_index(inplace=True)
 
-    fast = eq_df[uniq]['Close'].ewm(span=EMA_FAST, adjust=False).mean()
-    eq_df[uniq]['EMA_Slow'] = eq_df[uniq]['Close'].ewm(span=EMA_SLOW, adjust=False).mean()
-    eq_df[uniq]['MACD_Line'] = eq_df[uniq]['Close'].ewm(span=EMA_FAST, adjust=False).mean() - eq_df[uniq]['EMA_Slow']
-    eq_df[uniq]['Signal_Line'] = eq_df[uniq]['MACD_Line'].ewm(span=SIGNAL_PERIOD, adjust=False).mean()
-    eq_df[uniq]['Histogram'] = eq_df[uniq]['MACD_Line'] - eq_df[uniq]['Signal_Line']
+    smaFast = eq_df[uniq]['Close'].rolling(window=MaFast_period).mean()
+    smaSlow = eq_df[uniq]['Close'].rolling(window=MaSlow_period).mean()
 
-    # Generate Buy/Sell Signals
-    eq_df[uniq]['Buy_Signal'] = (eq_df[uniq]['Histogram'] < 0) & (eq_df[uniq]['Histogram'].shift(1) >= 0)
-    eq_df[uniq]['Sell_Signal'] = (eq_df[uniq]['Histogram'] > 0) & (eq_df[uniq]['Histogram'].shift(1) <= 0)
+    buffer1 = smaFast - smaSlow
+    buffer2 = buffer1.rolling(window=Signal_period).mean()
 
+    eq_df[uniq]['Buy_Signal'] = (buffer1 < buffer2) & (buffer1.shift(1) >= buffer2.shift(1))
+    eq_df[uniq]['Sell_Signal'] = (buffer1 > buffer2) & (buffer1.shift(1) <= buffer2.shift(1))
 
 # buy sell from signal
 is_finished = True

@@ -32,7 +32,7 @@ def check_winrate(dfs):
 
 
 df = pd.read_csv(
-    "~/Desktop/Daily_Ticks9.csv"
+    "~/Desktop/Daily_Ticks.csv"
 )
 # just for sell and buy
 df = df[(df["Flag"] == "Sell") | (df["Flag"] == "Buy")]

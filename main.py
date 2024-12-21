@@ -4,6 +4,7 @@ import os
 # from datetime import *
 from datetime import datetime, timedelta, date, time
 
+runtime_start = datetime.now()
 
 ################################################################ TEAM ################################################################
 
@@ -171,19 +172,19 @@ initial_investment = 10000000
 # prepare dataframe
 file_path = '~/Desktop/Daily_Ticks.csv' 
 df = pd.read_csv(file_path)
-df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy')]
+df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy') | (df['Flag'] == 'ATC')]
 df['TradeDateTime'] = pd.to_datetime(df['TradeDateTime'])
 df["TradeTime"] = df['TradeDateTime'].dt.time
 
 unique_sharecodes = list(df['ShareCode'].unique())
 itr = {uniq: 0 for uniq in unique_sharecodes}
-money_per_turn = 1_000_000
+money_per_turn = 500_000
 time_now = datetime.combine(date.today(), time(10, 00))
 
 timeframe = 5
 MaFast_period = 1  # Fast moving average period
-MaSlow_period = 34  # Slow moving average period
-Signal_period = 8   # Signal line period
+MaSlow_period = 17  # Slow moving average period
+Signal_period = 6   # Signal line period
 
 unique_df =  {}
 for uniq in unique_sharecodes:
@@ -293,14 +294,7 @@ def buy_stock(stock_name, volume, price, initial_balance, match_time: datetime):
         filtered_df = filtered_df[filtered_df['Flag'] == "Sell"].copy()
 
         if not filtered_df.empty:
-            # คำนวณความแตกต่างของเวลา
-            filtered_df.loc[:, 'time_diff'] = filtered_df['TradeTime'].apply(
-                lambda t: abs((datetime.combine(datetime.min, t) - datetime.combine(datetime.min, current_time)).total_seconds())
-            )
-            filtered_df = filtered_df[filtered_df['TradeTime'] <= current_time]
-
-            # หาแถวที่มีเวลาต่างกันน้อยที่สุด
-            closest_row = filtered_df.loc[filtered_df['time_diff'].idxmin()]
+            closest_row = filtered_df[filtered_df['TradeTime'] <= current_time].iloc[-1]
             last_price = closest_row['LastPrice']
         
         # หากพบราคา (last_price) จะคำนวณมูลค่าตลาด
@@ -348,15 +342,7 @@ def sell_stock(stock_name, volume, price, initial_balance, match_time: datetime)
             filtered_df = filtered_df[filtered_df['Flag'] == "Buy"].copy()
 
             if not filtered_df.empty:
-                # คำนวณความแตกต่างของเวลา
-                filtered_df.loc[:, 'time_diff'] = filtered_df['TradeTime'].apply(
-                    lambda t: abs((datetime.combine(datetime.min, t) - datetime.combine(datetime.min, current_time)).total_seconds())
-                )
-                # filtered_df['time_diff'] =  abs((datetime.combine(datetime.min, filtered_df['TradeTime']) - datetime.combine(datetime.min, current_time)).total_seconds())
-                filtered_df = filtered_df[filtered_df['TradeTime'] <= current_time]
-
-                # หาแถวที่มีเวลาต่างกันน้อยที่สุด
-                closest_row = filtered_df.loc[filtered_df['time_diff'].idxmin()]
+                closest_row = filtered_df[filtered_df['TradeTime'] <= current_time].iloc[-1]
                 last_price = closest_row['LastPrice']
             
             # หากพบราคา (last_price) จะคำนวณมูลค่าตลาด
@@ -571,3 +557,6 @@ summary_df = pd.DataFrame(summary_data)
 save_output(portfolio_df, "portfolio", team_name)
 save_output(statement_df, "statement", team_name)
 save_output(summary_df, "summary", team_name)
+
+runtime_end = datetime.now()
+print(f"runtime : {(runtime_end - runtime_start).total_seconds():.4f} seconds")
