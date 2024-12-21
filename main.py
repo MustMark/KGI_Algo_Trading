@@ -171,7 +171,7 @@ initial_investment = 10000000
 # prepare dataframe
 file_path = '~/Desktop/Daily_Ticks.csv' 
 df = pd.read_csv(file_path)
-df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy')]
+df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy') | (df['Flag'] == 'ATC')]
 df['TradeDateTime'] = pd.to_datetime(df['TradeDateTime'])
 df["TradeTime"] = df['TradeDateTime'].dt.time
 
@@ -182,8 +182,8 @@ time_now = datetime.combine(date.today(), time(10, 00))
 
 timeframe = 5
 MaFast_period = 1  # Fast moving average period
-MaSlow_period = 34  # Slow moving average period
-Signal_period = 8   # Signal line period
+MaSlow_period = 17  # Slow moving average period
+Signal_period = 6   # Signal line period
 
 unique_df =  {}
 for uniq in unique_sharecodes:
@@ -247,6 +247,24 @@ else:
 
 ################################################################ BUY - SELL FUNCTION ################################################################
 
+def cal_market_value(match_time: datetime, typ):
+    market_value = 0
+    for stock_in_portfolio in portfolio:
+        current_time = match_time.time()
+        last_price = None
+
+        filtered_df = unique_df[stock_in_portfolio]
+        filtered_df = filtered_df[filtered_df['Flag'] == typ].copy()
+
+        if not filtered_df.empty:
+            closest_row = filtered_df[filtered_df['TradeTime'] <= current_time].iloc[-1]
+            last_price = closest_row['LastPrice']
+        
+        # หากพบราคา (last_price) จะคำนวณมูลค่าตลาด
+        if last_price is not None:
+            market_value += portfolio[stock_in_portfolio]['volume'] * last_price
+    return market_value
+
 def filter_dataframe(stock_name, price, transaction_type):
 
     global time_now
@@ -285,27 +303,7 @@ def buy_stock(stock_name, volume, price, initial_balance, match_time: datetime):
 
     market_value = 0
 
-    for stock_in_portfolio in portfolio:
-        current_time = match_time.time()
-        last_price = None
-
-        filtered_df = unique_df[stock_in_portfolio]
-        filtered_df = filtered_df[filtered_df['Flag'] == "Sell"].copy()
-
-        if not filtered_df.empty:
-            # คำนวณความแตกต่างของเวลา
-            filtered_df.loc[:, 'time_diff'] = filtered_df['TradeTime'].apply(
-                lambda t: abs((datetime.combine(datetime.min, t) - datetime.combine(datetime.min, current_time)).total_seconds())
-            )
-            filtered_df = filtered_df[filtered_df['TradeTime'] <= current_time]
-
-            # หาแถวที่มีเวลาต่างกันน้อยที่สุด
-            closest_row = filtered_df.loc[filtered_df['time_diff'].idxmin()]
-            last_price = closest_row['LastPrice']
-        
-        # หากพบราคา (last_price) จะคำนวณมูลค่าตลาด
-        if last_price is not None:
-            market_value += portfolio[stock_in_portfolio]['volume'] * last_price
+    market_value = cal_market_value(match_time, "Sell")
 
     update_statement(stock_name, match_time, "Buy", volume, portfolio[stock_name]['volume'], price, initial_balance, market_value)
     # print(f"Bought {volume} shares of {stock_name} at {price} THB.")
@@ -338,30 +336,7 @@ def sell_stock(stock_name, volume, price, initial_balance, match_time: datetime)
             portfolio[stock_name]['volume'] = new_actual_volume
             portfolio[stock_name]['realized_PL'] += money_received - (portfolio[stock_name]['price'] * volume)
         
-        market_value = 0
-
-        for stock_in_portfolio in portfolio:
-            current_time = match_time.time()
-            last_price = None
-
-            filtered_df = unique_df[stock_in_portfolio]
-            filtered_df = filtered_df[filtered_df['Flag'] == "Buy"].copy()
-
-            if not filtered_df.empty:
-                # คำนวณความแตกต่างของเวลา
-                filtered_df.loc[:, 'time_diff'] = filtered_df['TradeTime'].apply(
-                    lambda t: abs((datetime.combine(datetime.min, t) - datetime.combine(datetime.min, current_time)).total_seconds())
-                )
-                # filtered_df['time_diff'] =  abs((datetime.combine(datetime.min, filtered_df['TradeTime']) - datetime.combine(datetime.min, current_time)).total_seconds())
-                filtered_df = filtered_df[filtered_df['TradeTime'] <= current_time]
-
-                # หาแถวที่มีเวลาต่างกันน้อยที่สุด
-                closest_row = filtered_df.loc[filtered_df['time_diff'].idxmin()]
-                last_price = closest_row['LastPrice']
-            
-            # หากพบราคา (last_price) จะคำนวณมูลค่าตลาด
-            if last_price is not None:
-                market_value += portfolio[stock_in_portfolio]['volume'] * last_price
+        market_value = cal_market_value(match_time, "Buy")
         
         if stock_name not in portfolio:
             actual_vol = 0
@@ -448,17 +423,6 @@ def running_buy_sell(transaction_q, initial_balance):
 ################################################################ BUY - SELL ################################################################
 
 # TEST CASE
-# initial_balance = buy_stock("ADVANC", 100, 295.0, initial_balance)
-# print(portfolio)
-# initial_balance = buy_stock("ADVANC", 2700, 294.0, initial_balance)
-# print(portfolio)
-# initial_balance = buy_stock("AOT", 100, 61.5, initial_balance)
-# print(portfolio)
-# initial_balance = buy_stock("EA", 100, 5.5, initial_balance)
-# print(portfolio)
-# initial_balance = sell_stock("ADVANC", 100, 289.0, initial_balance)
-# print(portfolio)
-
 # Clean Data and Generate Buy Sell Signal
 eq_df = {}
 for uniq in unique_sharecodes:
