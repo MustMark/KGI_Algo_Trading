@@ -178,7 +178,7 @@ df["TradeTime"] = df['TradeDateTime'].dt.time
 
 unique_sharecodes = list(df['ShareCode'].unique())
 itr = {uniq: 0 for uniq in unique_sharecodes}
-money_per_turn = 200_000
+money_per_turn = 500_000
 time_now = datetime.combine(date.today(), time(10, 00))
 
 timeframe = 1
@@ -426,21 +426,68 @@ def running_buy_sell(transaction_q, initial_balance):
 
 # TEST CASE
 # Clean Data and Generate Buy Sell Signal
-eq_df = {}
 
-# Calculate RSI
-def calculate_rsi(data):
-    delta = data['Close'].diff()
-    gain = delta.where(delta > 0, 0).rolling(window=14).mean()
-    loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    data['RSI'] = rsi
+def calculate_indicators(data):
+    data['SMA_Fast'] = data['Close'].rolling(window=MaFast_period).mean()
+    data['SMA_Slow'] = data['Close'].rolling(window=MaSlow_period).mean()
+    data['Buffer1'] = data['SMA_Fast'] - data['SMA_Slow']
+    data['Buffer2'] = data['Buffer1'].rolling(window=Signal_period).mean()
+    data['RSI'] = calculate_rsi(data['Close'])
+    data['Middle_Band'] = data['Close'].rolling(window=20).mean()
+    data['Upper_Band'] = data['Middle_Band'] + 2 * data['Close'].rolling(window=20).std()
+    data['Lower_Band'] = data['Middle_Band'] - 2 * data['Close'].rolling(window=20).std()
+
+    # Add MACD and Signal Line
+    data['MACD'] = data['Close'].ewm(span=12, adjust=False).mean() - data['Close'].ewm(span=26, adjust=False).mean()
+    data['Signal_Line'] = data['MACD'].ewm(span=9, adjust=False).mean()
+
+    # Add Stochastic Oscillator
+    data['%K'] = (data['Close'] - data['Low'].rolling(window=14).min()) / (data['High'].rolling(window=14).max() - data['Low'].rolling(window=14).min()) * 100
+    data['%D'] = data['%K'].rolling(window=3).mean()
+
     return data
 
+def calculate_rsi(close, window=14):
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0).rolling(window=window).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=window).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+def generate_signals(data):
+    # Existing signals
+    data['Buy_Signal'] = (
+        (data['Buffer1'] < data['Buffer2']) &
+        (data['Buffer1'].shift(1) >= data['Buffer2'].shift(1)) &
+        ((data['RSI'] < 45) | (data['Close'] < data['Lower_Band'])) 
+    )
+    data['Sell_Signal'] = (
+        (data['Buffer1'] > data['Buffer2']) &
+        (data['Buffer1'].shift(1) <= data['Buffer2'].shift(1)) &
+        ((data['RSI'] > 55) | (data['Close'] > data['Upper_Band']))
+    )
+
+    # Breakout Strategy
+    data['Buy_Signal'] |= data['High'] > data['High'].rolling(window=20).max()
+    data['Sell_Signal'] |= data['Low'] < data['Low'].rolling(window=20).min()
+
+    # Mean Reversion Strategy
+    data['Buy_Signal'] |= data['Close'] < (data['Close'].rolling(window=20).mean() - 2 * data['Close'].rolling(window=20).std())
+    data['Sell_Signal'] |= data['Close'] > (data['Close'].rolling(window=20).mean() + 2 * data['Close'].rolling(window=20).std())
+
+    # Add MACD signals
+    data['Buy_Signal'] |= data['MACD'] > data['Signal_Line']
+    data['Sell_Signal'] |= data['MACD'] < data['Signal_Line']
+
+    # Add Stochastic Oscillator signals
+    data['Buy_Signal'] |= (data['%K'] < 20) & (data['%K'] > data['%D'])
+    data['Sell_Signal'] |= (data['%K'] > 80) & (data['%K'] < data['%D'])
+
+    return data
+
+eq_df = {}
 for uniq in unique_sharecodes:
-    # Resample and aggregate data
-    eq_df[uniq] = unique_df[uniq].resample(f'{timeframe}s', on='TradeDateTime').agg({
+    eq_df[uniq] = unique_df[uniq].resample(f'{timeframe}min', on='TradeDateTime').agg({
         'LastPrice': ['first', 'max', 'min', 'last'],  # Open, High, Low, Close
         'Volume': 'sum',
         'Value': 'sum'
@@ -448,26 +495,17 @@ for uniq in unique_sharecodes:
     eq_df[uniq].columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Value']
     eq_df[uniq].reset_index(inplace=True)
 
-    # Calculate RSI
-    eq_df[uniq] = calculate_rsi(eq_df[uniq])
+    eq_df[uniq] = calculate_indicators(eq_df[uniq])
+    eq_df[uniq] = generate_signals(eq_df[uniq])
 
-    # Calculate SMA and buffers
-    smaFast = eq_df[uniq]['Close'].rolling(window=MaFast_period).mean()
-    smaSlow = eq_df[uniq]['Close'].rolling(window=MaSlow_period).mean()
-    buffer1 = smaFast - smaSlow
-    buffer2 = buffer1.rolling(window=Signal_period).mean()
+    # smaFast = eq_df[uniq]['Close'].rolling(window=MaFast_period).mean()
+    # smaSlow = eq_df[uniq]['Close'].rolling(window=MaSlow_period).mean()
 
-    # Generate Buy and Sell Signals
-    eq_df[uniq]['Buy_Signal'] = (
-        (buffer1 < buffer2) & 
-        (buffer1.shift(1) >= buffer2.shift(1)) &
-        (eq_df[uniq]['RSI'] < 40)  # RSI Oversold
-    )
-    eq_df[uniq]['Sell_Signal'] = (
-        (buffer1 > buffer2) & 
-        (buffer1.shift(1) <= buffer2.shift(1)) &
-        (eq_df[uniq]['RSI'] > 60)  # RSI Overbought
-    )
+    # buffer1 = smaFast - smaSlow
+    # buffer2 = buffer1.rolling(window=Signal_period).mean()
+
+    # eq_df[uniq]['Buy_Signal'] = (buffer1 < buffer2) & (buffer1.shift(1) >= buffer2.shift(1))
+    # eq_df[uniq]['Sell_Signal'] = (buffer1 > buffer2) & (buffer1.shift(1) <= buffer2.shift(1))
 
 # buy sell from signal
 is_finished = True
@@ -479,7 +517,7 @@ while True:
             trade_dt = datetime.time(series["TradeDateTime"])
 
             if trade_dt == time_now.time():
-                if series["Buy_Signal"] == True and time_now.time() < time(15, 00):
+                if series["Buy_Signal"] == True and time_now.time() < time(16, 00):
                 # if series["Buy_Signal"] == True:
                     # print(f"{time_now}\t{uniq}\tbuy")
                     price = series['Close'] 
@@ -501,14 +539,15 @@ while True:
 
     if is_finished:
         break
+
     if time_now.time() == time(12, 30):
         time_now += timedelta(hours=1)
-    
+
     initial_balance = running_buy_sell(transaction_q, initial_balance)
     transaction_q = []
     is_finished = True
     print(f"Time : {time_now.time()}, Win_rate : {round((count_win * 100) / count_sell, 4) if count_sell != 0 else 0}")
-    time_now += timedelta(seconds=timeframe)
+    time_now += timedelta(minutes=timeframe)
 
 ################################################## End ##############################################################################
 

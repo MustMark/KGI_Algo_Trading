@@ -178,7 +178,7 @@ df["TradeTime"] = df['TradeDateTime'].dt.time
 
 unique_sharecodes = list(df['ShareCode'].unique())
 itr = {uniq: 0 for uniq in unique_sharecodes}
-money_per_turn = 500_000
+money_per_turn = 200_000
 time_now = datetime.combine(date.today(), time(10, 00))
 
 timeframe = 1
@@ -477,6 +477,10 @@ while True:
 
     if is_finished:
         break
+
+    if time_now.time() == time(12, 30):
+        time_now += timedelta(hours=1)
+
     initial_balance = running_buy_sell(transaction_q, initial_balance)
     transaction_q = []
     is_finished = True

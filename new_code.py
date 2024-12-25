@@ -177,7 +177,7 @@ df["TradeTime"] = df['TradeDateTime'].dt.time
 
 unique_sharecodes = list(df['ShareCode'].unique())
 itr = {uniq: 0 for uniq in unique_sharecodes}
-money_per_turn = 1_000_000
+money_per_turn = 500_000
 time_now = datetime.combine(date.today(), time(10, 00))
 
 timeframe = 5
