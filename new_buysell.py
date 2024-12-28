@@ -3,7 +3,9 @@ import numpy as np
 import os
 # from datetime import *
 from datetime import datetime, timedelta, date, time
-
+from ta.momentum import RSIIndicator
+from ta.trend import MACD
+from ta.volatility import BollingerBands
 runtime_start = datetime.now()
 
 ################################################################ TEAM ################################################################
@@ -171,7 +173,7 @@ last_end_line_available = 0
 initial_investment = 10000000 
 
 # prepare dataframe
-file_path = '~/Desktop/Daily_Ticks.csv' 
+file_path = '~/Desktop/tick/Daily_Ticks18.csv' 
 df = pd.read_csv(file_path)
 df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy') | (df['Flag'] == 'ATC')]
 df['TradeDateTime'] = pd.to_datetime(df['TradeDateTime'])
@@ -182,10 +184,15 @@ itr = {uniq: 0 for uniq in unique_sharecodes}
 money_per_turn = 3_000_000
 time_now = datetime.combine(date.today(), time(10, 00))
 
-timeframe = 5
-MaFast_period = 1  # Fast moving average period
-MaSlow_period = 17  # Slow moving average period
-Signal_period = 6   # Signal line period
+timeframe = 1
+MaFast_period = 1
+MaSlow_period = 17
+Signal_period = 6
+rsi_period = 14
+bollinger_window = 20
+bollinger_std = 2
+stop_loss_percentage = 0.03  # 2% Stop Loss
+take_profit_percentage = 0.05  # 3% Take Profit
 
 unique_df =  {}
 for uniq in unique_sharecodes:
@@ -275,11 +282,11 @@ def filter_dataframe(stock_name, price, transaction_type):
     
     filtered_df = unique_df[stock_name]
     filtered_df = filtered_df[(filtered_df['Flag'] == transaction_type) & (filtered_df['TradeTime'] >= time_least) & (filtered_df['TradeTime'] < time_max)]
-
-    if transaction_type == "Sell":
-        filtered_df = filtered_df[filtered_df['LastPrice'] <= price]
-    else:
-        filtered_df = filtered_df[filtered_df['LastPrice'] >= price]
+    if not filtered_df.empty:
+        if transaction_type == "Sell":
+            filtered_df = filtered_df[filtered_df['LastPrice'] <= price]
+        else:
+            filtered_df = filtered_df[filtered_df['LastPrice'] >= price]
     return filtered_df
 
 # ฟังก์ชันซื้อหุ้น
@@ -455,6 +462,29 @@ def create_sell_queue(stock_name, price):
     buysell_q.append({"type": "Sell", "stock": stock_name, "vol": 1, "price": price})
     return
 
+def manage_risk():
+    global eq_df
+    global time_now
+
+    for stock in portfolio.keys():
+        stock_start = portfolio[stock]
+        stock_now = eq_df[stock]
+        series = None
+        for idx, row in stock_now.iterrows():
+            trade_dt = datetime.time(row["TradeDateTime"])
+            if trade_dt == time_now.time():
+                series = row
+                break
+        # print(time_now, stock_start, stock_now, series, end="\n\n")
+        if series is None:
+            return
+        # stoploss
+        if stock_start["price"] * (100-stop_loss_percentage)/100 <= series["Close"] or \
+            stock_start["price"] * (100+take_profit_percentage)/100 >= series["Close"] :
+            create_sell_queue(stock, series["Close"])
+
+
+
 ################################################################ BUY - SELL ################################################################
 
 # TEST CASE
@@ -469,20 +499,26 @@ for uniq in unique_sharecodes:
     eq_df[uniq].columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Value']
     eq_df[uniq].reset_index(inplace=True)
 
-    delta = eq_df[uniq]['Close'].diff()
-    gain = delta.where(delta > 0, 0).rolling(window=14).mean()
-    loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
+    # คำนวณ Moving Averages
+    smaFast = eq_df[uniq]['Close'].rolling(window=MaFast_period).mean()
+    smaSlow = eq_df[uniq]['Close'].rolling(window=MaSlow_period).mean()
 
-    smaFast = eq_df[uniq]['Close'].ewm(span=MaFast_period, adjust=False).mean()
-    smaSlow = eq_df[uniq]['Close'].ewm(span=MaSlow_period, adjust=False).mean()
-
+    # คำนวณ Buffer สำหรับ Buy/Sell Signal
     buffer1 = smaFast - smaSlow
     buffer2 = buffer1.rolling(window=Signal_period).mean()
 
-    eq_df[uniq]['Buy_Signal'] = (buffer1 < buffer2) & (buffer1.shift(1) >= buffer2.shift(1)) & (rsi < 30)
-    eq_df[uniq]['Sell_Signal'] = (buffer1 > buffer2) & (buffer1.shift(1) <= buffer2.shift(1)) & (rsi > 70)
+    # คำนวณ RSI
+    eq_df[uniq]['RSI'] = 100 - (100 / (1 + (eq_df[uniq]['Close'].diff(1).where(lambda x: x > 0, 0).rolling(window=rsi_period).mean() /
+                                        eq_df[uniq]['Close'].diff(1).where(lambda x: x < 0, 0).rolling(window=rsi_period).mean())))
+
+    # คำนวณ Bollinger Bands
+    eq_df[uniq]['MA'] = eq_df[uniq]['Close'].rolling(window=bollinger_window).mean()
+    eq_df[uniq]['Upper_Band'] = eq_df[uniq]['MA'] + (bollinger_std * eq_df[uniq]['Close'].rolling(window=bollinger_window).std())
+    eq_df[uniq]['Lower_Band'] = eq_df[uniq]['MA'] - (bollinger_std * eq_df[uniq]['Close'].rolling(window=bollinger_window).std())
+
+    # กำหนด Buy/Sell Signal โดยใช้ Buffer, RSI, และ Bollinger Bands
+    eq_df[uniq]['Buy_Signal'] = (buffer1 < buffer2) & (buffer1.shift(1) >= buffer2.shift(1)) & (eq_df[uniq]['RSI'] < 30) & (eq_df[uniq]['Close'] < eq_df[uniq]['Lower_Band'])
+    eq_df[uniq]['Sell_Signal'] = (buffer1 > buffer2) & (buffer1.shift(1) <= buffer2.shift(1)) & (eq_df[uniq]['RSI'] > 70) & (eq_df[uniq]['Close'] > eq_df[uniq]['Upper_Band'])
 
 # buy sell from signal
 is_finished = True
@@ -506,10 +542,10 @@ while True:
                     if vol >= 100:
                         create_buy_queue(uniq, vol, price)
 
-                elif series["Sell_Signal"] == True:
-                    # print(f"{time_now}\t{uniq}\tsell")
-                    price = series['Close']
-                    create_sell_queue(uniq, price)
+                # elif series["Sell_Signal"] == True:
+                #     # print(f"{time_now}\t{uniq}\tsell")
+                #     price = series['Close']
+                #     create_sell_queue(uniq, price)
 
             if trade_dt <= time_now.time():
                 itr[uniq] += 1
@@ -519,7 +555,7 @@ while True:
 
     if time_now.time() == time(12, 30):
         time_now += timedelta(hours=1)
-
+    manage_risk()
     initial_balance = running_buy_sell(initial_balance)
     is_finished = True
     print(f"Time : {time_now.time()}, Win_rate : {round((count_win * 100) / count_sell, 4) if count_sell != 0 else 0}")
