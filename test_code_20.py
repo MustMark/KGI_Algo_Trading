@@ -445,6 +445,8 @@ def calculate_indicators(data):
     data['%K'] = (data['Close'] - data['Low'].rolling(window=14).min()) / (data['High'].rolling(window=14).max() - data['Low'].rolling(window=14).min()) * 100
     data['%D'] = data['%K'].rolling(window=3).mean()
 
+    data['Trailing_Stop'] = data['Close'].rolling(window=5).max() * 0.95
+
     return data
 
 def calculate_rsi(close, window=14):
@@ -482,6 +484,8 @@ def generate_signals(data):
     # Add Stochastic Oscillator signals
     data['Buy_Signal'] |= (data['%K'] < 20) & (data['%K'] > data['%D'])
     data['Sell_Signal'] |= (data['%K'] > 80) & (data['%K'] < data['%D'])
+
+    data['Sell_Signal'] |= data['Close'] < data['Trailing_Stop']
 
     return data
 
@@ -597,12 +601,16 @@ summary_data = {
 }
 
 summary_df = pd.DataFrame(summary_data)
+print()
+print(f"[Day {summary_data['trading_day'][0]}] %Return : {summary_data['%Return'][0]}, Win_rate : {summary_data['Win rate'][0]}")
 
 ################################################## Save ##############################################################################
 
+print()
 save_output(portfolio_df, "portfolio", team_name)
 save_output(statement_df, "statement", team_name)
 save_output(summary_df, "summary", team_name)
 
+print()
 runtime_end = datetime.now()
 print(f"Run_time : {(runtime_end - runtime_start).total_seconds():.4f} seconds")

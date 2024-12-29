@@ -178,7 +178,7 @@ df["TradeTime"] = df['TradeDateTime'].dt.time
 
 unique_sharecodes = list(df['ShareCode'].unique())
 itr = {uniq: 0 for uniq in unique_sharecodes}
-money_per_turn = 200_000
+money_per_turn = 500_000
 time_now = datetime.combine(date.today(), time(10, 00))
 
 timeframe = 1
@@ -535,12 +535,16 @@ summary_data = {
 }
 
 summary_df = pd.DataFrame(summary_data)
+print()
+print(f"[Day {summary_data['trading_day'][0]}] %Return : {summary_data['%Return'][0]}, Win_rate : {summary_data['Win rate'][0]}")
 
 ################################################## Save ##############################################################################
 
+print()
 save_output(portfolio_df, "portfolio", team_name)
 save_output(statement_df, "statement", team_name)
 save_output(summary_df, "summary", team_name)
 
+print()
 runtime_end = datetime.now()
 print(f"Run_time : {(runtime_end - runtime_start).total_seconds():.4f} seconds")
