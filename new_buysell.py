@@ -173,7 +173,7 @@ last_end_line_available = 0
 initial_investment = 10000000 
 
 # prepare dataframe
-file_path = '~/Desktop/tick/Daily_Ticks18.csv' 
+file_path = '~/Desktop/Daily_Ticks.csv' 
 df = pd.read_csv(file_path)
 df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy') | (df['Flag'] == 'ATC')]
 df['TradeDateTime'] = pd.to_datetime(df['TradeDateTime'])
@@ -266,8 +266,12 @@ def cal_market_value(match_time: datetime, typ):
         filtered_df = filtered_df[filtered_df['Flag'] == typ].copy()
 
         if not filtered_df.empty:
-            closest_row = filtered_df[filtered_df['TradeTime'] <= current_time].iloc[-1]
-            last_price = closest_row['LastPrice']
+            # Filter rows with 'TradeTime' less than or equal to current_time
+            valid_rows = filtered_df[filtered_df['TradeTime'] <= current_time]
+            
+            if not valid_rows.empty:
+                closest_row = valid_rows.iloc[-1]
+                last_price = closest_row['LastPrice']
         
         # หากพบราคา (last_price) จะคำนวณมูลค่าตลาด
         if last_price is not None:

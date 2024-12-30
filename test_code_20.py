@@ -169,26 +169,23 @@ previous_transactions = 0
 last_end_line_available = 0
 initial_investment = 10000000 
 
-# prepare dataframe
 file_path = '~/Desktop/Daily_Ticks.csv' 
+
+# Preprocess the data
 df = pd.read_csv(file_path)
-df = df[(df['Flag'] == 'Sell') | (df['Flag'] == 'Buy') | (df['Flag'] == 'ATC')]
+df = df[df['Flag'].isin(['Sell', 'Buy', 'ATC'])]  # More efficient filter
 df['TradeDateTime'] = pd.to_datetime(df['TradeDateTime'])
 df["TradeTime"] = df['TradeDateTime'].dt.time
 
 unique_sharecodes = list(df['ShareCode'].unique())
 itr = {uniq: 0 for uniq in unique_sharecodes}
-money_per_turn = 500_000
+money_per_turn = 1_000_000
 time_now = datetime.combine(date.today(), time(10, 00))
 
 timeframe = 1
 MaFast_period = 1  # Fast moving average period
 MaSlow_period = 17  # Slow moving average period
 Signal_period = 6   # Signal line period
-
-unique_df =  {}
-for uniq in unique_sharecodes:
-    unique_df[uniq] = df[df['ShareCode'] == uniq]
 
 ############################################################### Load file ################################################################ 
 prev_portfolio_df = load_previous("portfolio", team_name)
@@ -258,8 +255,12 @@ def cal_market_value(match_time: datetime, typ):
         filtered_df = filtered_df[filtered_df['Flag'] == typ].copy()
 
         if not filtered_df.empty:
-            closest_row = filtered_df[filtered_df['TradeTime'] <= current_time].iloc[-1]
-            last_price = closest_row['LastPrice']
+            # Filter rows with 'TradeTime' less than or equal to current_time
+            valid_rows = filtered_df[filtered_df['TradeTime'] <= current_time]
+            
+            if not valid_rows.empty:
+                closest_row = valid_rows.iloc[-1]
+                last_price = closest_row['LastPrice']
         
         # หากพบราคา (last_price) จะคำนวณมูลค่าตลาด
         if last_price is not None:
@@ -424,94 +425,84 @@ def running_buy_sell(transaction_q, initial_balance):
 
 ################################################################ BUY - SELL ################################################################
 
-# TEST CASE
-# Clean Data and Generate Buy Sell Signal
+# Split the DataFrame based on unique ShareCode
+unique_df = {uniq: df[df['ShareCode'] == uniq] for uniq in unique_sharecodes}
 
+# Optimized MACD calculation using vectorized operations
+def calculate_macd_optimized(close_prices, short_span=12, long_span=26, signal_span=9):
+    close_prices = np.array(close_prices)
+    
+    short_ema = pd.Series(close_prices).ewm(span=short_span, adjust=False).mean()
+    long_ema = pd.Series(close_prices).ewm(span=long_span, adjust=False).mean()
+    macd = short_ema - long_ema
+    signal_line = macd.ewm(span=signal_span, adjust=False).mean()
+    
+    return macd, signal_line
+
+# Optimized function to calculate indicators
 def calculate_indicators(data):
-    data['SMA_Fast'] = data['Close'].rolling(window=MaFast_period).mean()
-    data['SMA_Slow'] = data['Close'].rolling(window=MaSlow_period).mean()
-    data['Buffer1'] = data['SMA_Fast'] - data['SMA_Slow']
-    data['Buffer2'] = data['Buffer1'].rolling(window=Signal_period).mean()
-    data['RSI'] = calculate_rsi(data['Close'])
-    data['Middle_Band'] = data['Close'].rolling(window=20).mean()
-    data['Upper_Band'] = data['Middle_Band'] + 2 * data['Close'].rolling(window=20).std()
-    data['Lower_Band'] = data['Middle_Band'] - 2 * data['Close'].rolling(window=20).std()
-
-    # Add MACD and Signal Line
-    data['MACD'] = data['Close'].ewm(span=12, adjust=False).mean() - data['Close'].ewm(span=26, adjust=False).mean()
-    data['Signal_Line'] = data['MACD'].ewm(span=9, adjust=False).mean()
-
-    # Add Stochastic Oscillator
-    data['%K'] = (data['Close'] - data['Low'].rolling(window=14).min()) / (data['High'].rolling(window=14).max() - data['Low'].rolling(window=14).min()) * 100
-    data['%D'] = data['%K'].rolling(window=3).mean()
-
-    data['Trailing_Stop'] = data['Close'].rolling(window=5).max() * 0.95
-
+    # Use numpy to speed up rolling window calculations
+    close = data['Close'].values
+    sma_fast = pd.Series(close).rolling(window=MaFast_period, min_periods=1).mean()
+    sma_slow = pd.Series(close).rolling(window=MaSlow_period, min_periods=1).mean()
+    
+    middle_band = pd.Series(close).rolling(window=20).mean()
+    upper_band = middle_band + 2 * pd.Series(close).rolling(window=20).std()
+    lower_band = middle_band - 2 * pd.Series(close).rolling(window=20).std()
+    
+    macd, signal_line = calculate_macd_optimized(close)
+    
+    # Assign to DataFrame
+    data['SMA_Fast'] = sma_fast
+    data['SMA_Slow'] = sma_slow
+    data['Middle_Band'] = middle_band
+    data['Upper_Band'] = upper_band
+    data['Lower_Band'] = lower_band
+    data['MACD'] = macd
+    data['Signal_Line'] = signal_line
+    
     return data
 
-def calculate_rsi(close, window=14):
-    delta = close.diff()
-    gain = delta.where(delta > 0, 0).rolling(window=window).mean()
-    loss = -delta.where(delta < 0, 0).rolling(window=window).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
-
+# Optimized signal generation
 def generate_signals(data):
-    # Existing signals
-    data['Buy_Signal'] = (
-        (data['Buffer1'] < data['Buffer2']) &
-        (data['Buffer1'].shift(1) >= data['Buffer2'].shift(1)) &
-        ((data['RSI'] < 45) | (data['Close'] < data['Lower_Band'])) 
-    )
-    data['Sell_Signal'] = (
-        (data['Buffer1'] > data['Buffer2']) &
-        (data['Buffer1'].shift(1) <= data['Buffer2'].shift(1)) &
-        ((data['RSI'] > 55) | (data['Close'] > data['Upper_Band']))
-    )
-
-    # Breakout Strategy
-    data['Buy_Signal'] |= data['High'] > data['High'].rolling(window=20).max()
-    data['Sell_Signal'] |= data['Low'] < data['Low'].rolling(window=20).min()
-
-    # Mean Reversion Strategy
-    data['Buy_Signal'] |= data['Close'] < (data['Close'].rolling(window=20).mean() - 2 * data['Close'].rolling(window=20).std())
-    data['Sell_Signal'] |= data['Close'] > (data['Close'].rolling(window=20).mean() + 2 * data['Close'].rolling(window=20).std())
-
-    # Add MACD signals
-    data['Buy_Signal'] |= data['MACD'] > data['Signal_Line']
-    data['Sell_Signal'] |= data['MACD'] < data['Signal_Line']
-
-    # Add Stochastic Oscillator signals
-    data['Buy_Signal'] |= (data['%K'] < 20) & (data['%K'] > data['%D'])
-    data['Sell_Signal'] |= (data['%K'] > 80) & (data['%K'] < data['%D'])
-
-    data['Sell_Signal'] |= data['Close'] < data['Trailing_Stop']
-
+    close = data['Close'].values
+    sma_fast = data['SMA_Fast'].values
+    sma_slow = data['SMA_Slow'].values
+    macd = data['MACD'].values
+    signal_line = data['Signal_Line'].values
+    lower_band = data['Lower_Band'].values
+    upper_band = data['Upper_Band'].values
+    
+    buy_signal = ((sma_fast < sma_slow) & (close < lower_band)) | (macd > signal_line)
+    sell_signal = ((sma_fast > sma_slow) & (close > upper_band)) | (macd < signal_line)
+    
+    data['Buy_Signal'] = buy_signal
+    data['Sell_Signal'] = sell_signal
+    
     return data
 
+# Processing each unique ShareCode
 eq_df = {}
 for uniq in unique_sharecodes:
-    eq_df[uniq] = unique_df[uniq].resample(f'{timeframe}min', on='TradeDateTime').agg({
+    # Resample and aggregate data
+    resampled_data = unique_df[uniq].resample(f'{timeframe}min', on='TradeDateTime').agg({
         'LastPrice': ['first', 'max', 'min', 'last'],  # Open, High, Low, Close
         'Volume': 'sum',
         'Value': 'sum'
     }).dropna()
-    eq_df[uniq].columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Value']
-    eq_df[uniq].reset_index(inplace=True)
+    resampled_data.columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Value']
+    resampled_data.reset_index(inplace=True)
+    
+    # Calculate indicators and signals
+    resampled_data = calculate_indicators(resampled_data)
+    resampled_data = generate_signals(resampled_data)
+    
+    eq_df[uniq] = resampled_data
 
-    eq_df[uniq] = calculate_indicators(eq_df[uniq])
-    eq_df[uniq] = generate_signals(eq_df[uniq])
 
-    # smaFast = eq_df[uniq]['Close'].rolling(window=MaFast_period).mean()
-    # smaSlow = eq_df[uniq]['Close'].rolling(window=MaSlow_period).mean()
+stop_loss_percentage = 0.0001  # 0.5% สำหรับ Stop Loss
+take_profit_percentage = 0.005  # 1% สำหรับ Take Profit
 
-    # buffer1 = smaFast - smaSlow
-    # buffer2 = buffer1.rolling(window=Signal_period).mean()
-
-    # eq_df[uniq]['Buy_Signal'] = (buffer1 < buffer2) & (buffer1.shift(1) >= buffer2.shift(1))
-    # eq_df[uniq]['Sell_Signal'] = (buffer1 > buffer2) & (buffer1.shift(1) <= buffer2.shift(1))
-
-# buy sell from signal
 is_finished = True
 while True:
     for uniq in unique_sharecodes:
@@ -521,22 +512,49 @@ while True:
             trade_dt = datetime.time(series["TradeDateTime"])
 
             if trade_dt == time_now.time():
-                if series["Buy_Signal"] == True and time_now.time() < time(16, 00):
-                # if series["Buy_Signal"] == True:
-                    # print(f"{time_now}\t{uniq}\tbuy")
-                    price = series['Close'] 
-                    if initial_balance >= money_per_turn:
-                        vol = (money_per_turn * 100)//(price * 100)    # เอาหุ้น 100 หุ้นเป็นต้นไป
-                    else:
-                        vol = (initial_balance * 100)//(price * 100)    # เอาหุ้น 100 หุ้นเป็นต้นไป
-                    # buy_stock(uniq, vol, price, initial_balance)
-                    if vol >= 100:
-                        create_buy_stock(uniq, vol, price)
+                
+                price = series['Close']
 
-                elif series["Sell_Signal"] == True:
-                    # print(f"{time_now}\t{uniq}\tsell")
-                    price = series['Close'] 
-                    create_sell_stock(uniq, price)
+                buy_price = price
+                # ตั้ง Stop Loss และ Take Profit
+                stop_loss_price = buy_price * (1 - stop_loss_percentage)
+                take_profit_price = buy_price * (1 + take_profit_percentage)
+                # ตรวจสอบการทำกำไรหรือขาดทุน
+                if uniq in portfolio:
+                    if portfolio[uniq]['price'] >= take_profit_price:
+                        # ทำการขายเมื่อได้กำไร
+                        create_sell_stock(uniq, price)
+                    elif portfolio[uniq]['price'] <= stop_loss_price:
+                        # ขายเมื่อถึง Stop Loss
+                        create_sell_stock(uniq, price)
+                    else:
+                        if series["Buy_Signal"] == True and time_now.time() < time(16, 00):
+                        # ถ้ามีสัญญาณซื้อ และเวลาอยู่ภายในช่วงที่อนุญาต
+                            if initial_balance >= money_per_turn:
+                                vol = (money_per_turn * 100) // (price * 100)  # ใช้หุ้น 100 หุ้น
+                            else:
+                                vol = (initial_balance * 100) // (price * 100)  # ใช้หุ้น 100 หุ้น
+
+                            if vol >= 100:
+                                create_buy_stock(uniq, vol, price)
+
+                        elif series["Sell_Signal"] == True:
+                            # ถ้ามีสัญญาณขาย
+                            create_sell_stock(uniq, price)
+                else:
+                    if series["Buy_Signal"] == True and time_now.time() < time(16, 00):
+                        # ถ้ามีสัญญาณซื้อ และเวลาอยู่ภายในช่วงที่อนุญาต
+                        if initial_balance >= money_per_turn:
+                            vol = (money_per_turn * 100) // (price * 100)  # ใช้หุ้น 100 หุ้น
+                        else:
+                            vol = (initial_balance * 100) // (price * 100)  # ใช้หุ้น 100 หุ้น
+
+                        if vol >= 100:
+                            create_buy_stock(uniq, vol, price)
+
+                    elif series["Sell_Signal"] == True:
+                        # ถ้ามีสัญญาณขาย
+                        create_sell_stock(uniq, price)
 
             if trade_dt <= time_now.time():
                 itr[uniq] += 1
