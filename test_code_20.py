@@ -428,39 +428,64 @@ def running_buy_sell(transaction_q, initial_balance):
 # Split the DataFrame based on unique ShareCode
 unique_df = {uniq: df[df['ShareCode'] == uniq] for uniq in unique_sharecodes}
 
-# Optimized MACD calculation using vectorized operations
 def calculate_macd_optimized(close_prices, short_span=12, long_span=26, signal_span=9):
+    """
+    Optimized MACD calculation using NumPy for improved performance.
+    """
+    # Convert close_prices to a NumPy array
     close_prices = np.array(close_prices)
-    
-    short_ema = pd.Series(close_prices).ewm(span=short_span, adjust=False).mean()
-    long_ema = pd.Series(close_prices).ewm(span=long_span, adjust=False).mean()
+
+    # Calculate EMA for short and long spans
+    short_ema = calculate_ema_np(close_prices, short_span)
+    long_ema = calculate_ema_np(close_prices, long_span)
+
+    # MACD Line
     macd = short_ema - long_ema
-    signal_line = macd.ewm(span=signal_span, adjust=False).mean()
-    
+
+    # Signal Line
+    signal_line = calculate_ema_np(macd, signal_span)
+
     return macd, signal_line
 
-# Optimized function to calculate indicators
-def calculate_indicators(data):
-    # Use numpy to speed up rolling window calculations
+def calculate_ema_np(prices, span):
+    """
+    Calculate Exponential Moving Average (EMA) using NumPy.
+    """
+    alpha = 2 / (span + 1)
+    ema = np.zeros_like(prices)
+    ema[0] = prices[0]  # Set the first value as the initial EMA
+    for i in range(1, len(prices)):
+        ema[i] = alpha * prices[i] + (1 - alpha) * ema[i - 1]
+    return ema
+
+def calculate_indicators(data, ma_fast_period=1, ma_slow_period=17, bollinger_period=20):
+    """
+    Optimized function to calculate indicators using NumPy.
+    """
     close = data['Close'].values
-    sma_fast = pd.Series(close).rolling(window=MaFast_period, min_periods=1).mean()
-    sma_slow = pd.Series(close).rolling(window=MaSlow_period, min_periods=1).mean()
-    
-    middle_band = pd.Series(close).rolling(window=20).mean()
-    upper_band = middle_band + 2 * pd.Series(close).rolling(window=20).std()
-    lower_band = middle_band - 2 * pd.Series(close).rolling(window=20).std()
-    
+
+    # Simple Moving Averages
+    sma_fast = np.convolve(close, np.ones(ma_fast_period) / ma_fast_period, mode='valid')
+    sma_slow = np.convolve(close, np.ones(ma_slow_period) / ma_slow_period, mode='valid')
+
+    # Bollinger Bands
+    rolling_mean = np.convolve(close, np.ones(bollinger_period) / bollinger_period, mode='valid')
+    rolling_std = np.sqrt(np.convolve((close - np.mean(close))**2, np.ones(bollinger_period) / bollinger_period, mode='valid'))
+    upper_band = rolling_mean + 2 * rolling_std
+    lower_band = rolling_mean - 2 * rolling_std
+
+    # MACD
     macd, signal_line = calculate_macd_optimized(close)
-    
-    # Assign to DataFrame
-    data['SMA_Fast'] = sma_fast
-    data['SMA_Slow'] = sma_slow
-    data['Middle_Band'] = middle_band
-    data['Upper_Band'] = upper_band
-    data['Lower_Band'] = lower_band
+
+    # Pad the results to align with the original array size
+    data['SMA_Fast'] = np.pad(sma_fast, (len(close) - len(sma_fast), 0), 'constant', constant_values=np.nan)
+    data['SMA_Slow'] = np.pad(sma_slow, (len(close) - len(sma_slow), 0), 'constant', constant_values=np.nan)
+    data['Middle_Band'] = np.pad(rolling_mean, (len(close) - len(rolling_mean), 0), 'constant', constant_values=np.nan)
+    data['Upper_Band'] = np.pad(upper_band, (len(close) - len(upper_band), 0), 'constant', constant_values=np.nan)
+    data['Lower_Band'] = np.pad(lower_band, (len(close) - len(lower_band), 0), 'constant', constant_values=np.nan)
     data['MACD'] = macd
     data['Signal_Line'] = signal_line
-    
+
     return data
 
 # Optimized signal generation
