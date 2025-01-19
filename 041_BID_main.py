@@ -427,7 +427,7 @@ for uniq in unique_sharecodes:
 
 # buy sell from signal
 itr = {uniq: 0 for uniq in unique_sharecodes}
-money_per_turn = 1_000_000
+money_per_turn = 200_000
 time_start = datetime.combine(date.today(), time(9, 55))
 is_finished = True
 while True:

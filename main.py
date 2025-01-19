@@ -456,19 +456,16 @@ while True:
 
             if trade_dt == time_now.time():
                 if series["Buy_Signal"] == True and time_now.time() < time(16, 00):
-                # if series["Buy_Signal"] == True:
-                    # print(f"{time_now}\t{uniq}\tbuy")
+
                     price = series['Close'] 
                     if initial_balance >= money_per_turn:
                         vol = (money_per_turn * 100)//(price * 100)    # เอาหุ้น 100 หุ้นเป็นต้นไป
                     else:
                         vol = (initial_balance * 100)//(price * 100)    # เอาหุ้น 100 หุ้นเป็นต้นไป
-                    # buy_stock(uniq, vol, price, initial_balance)
                     if vol >= 100:
                         create_buy_stock(uniq, vol, price)
 
                 elif series["Sell_Signal"] == True:
-                    # print(f"{time_now}\t{uniq}\tsell")
                     price = series['Close'] 
                     create_sell_stock(uniq, price)
 

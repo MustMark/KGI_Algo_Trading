@@ -169,7 +169,7 @@ previous_transactions = 0
 last_end_line_available = 0
 initial_investment = 10000000 
 
-file_path = '~/Desktop/Daily_Ticks.csv' 
+file_path = '~/Desktop/Daily_Ticks (4).csv' 
 
 # Preprocess the data
 df = pd.read_csv(file_path)
